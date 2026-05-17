@@ -511,14 +511,15 @@
           </div>
         </div>
         <div class="card cashier-login-hint" style="margin-bottom:18px">
-          <div style="font-weight:600;color:var(--text);margin-bottom:4px">Cashier Login Format</div>
+          <div style="font-weight:600;color:var(--text);margin-bottom:4px">📋 Cashier Login Format</div>
           <div style="font-family:var(--font-mono);font-size:12px;color:var(--text-3)" id="cashierLoginHint">
-            Cashiers log in using: <strong id="cashierLoginEmail" style="color:var(--blue)">—</strong>
+            Each cashier logs in with their own unique address: <strong id="cashierLoginEmail" style="color:var(--blue)">username@storeid.cashier.pro</strong>
           </div>
+          <div style="font-size:11px;color:var(--text-3);margin-top:4px">Passwords are set per cashier when you add them above.</div>
         </div>
         <div class="table-wrapper">
           <table>
-            <thead><tr><th>Name</th><th>Username</th><th>Added</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Login Email</th><th>Role</th><th>Added</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody id="cashiersBody"></tbody>
           </table>
         </div>
@@ -561,7 +562,7 @@
 
   <!-- Cashier Modal -->
   <div class="modal-overlay hidden" id="modal-cashier">
-    <div class="modal-box" style="max-width:420px">
+    <div class="modal-box" style="max-width:460px">
       <div class="modal-header">
         <span class="modal-title">Add Cashier Account</span>
         <button class="modal-close" onclick="closeModal('modal-cashier')">✕</button>
@@ -569,12 +570,42 @@
       <div style="padding:20px 24px">
         <div class="form-group" style="margin-bottom:14px">
           <label class="form-label">Cashier Full Name *</label>
-          <input class="form-input" id="cashierFormName" placeholder="e.g. Maria Santos" />
+          <input class="form-input" id="cashierFormName" placeholder="e.g. Maria Santos"
+                 oninput="updateCashierUsernamePreview()" />
         </div>
-        <div class="cashier-login-hint" style="margin-bottom:16px">
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--blue);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">Login Format</div>
-          <div style="font-family:var(--font-mono);font-size:13px;color:var(--text)" id="cashierLoginFormatHint">storename@cashier.pro</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Cashier uses the store's shared cashier account</div>
+        <div class="form-group" style="margin-bottom:14px">
+          <label class="form-label">Username / Subdomain *
+            <span style="font-size:10px;color:var(--text-3);font-weight:400;margin-left:4px">(letters and numbers only)</span>
+          </label>
+          <div style="display:flex;align-items:center;gap:0">
+            <input class="form-input" id="cashierFormUsername" placeholder="mariasantos"
+                   style="border-radius:var(--radius-sm) 0 0 var(--radius-sm);border-right:none;flex:1"
+                   oninput="sanitizeCashierUsername(this)" />
+            <span id="cashierUsernameSuffix"
+                  style="background:var(--surface-2);border:1.5px solid var(--border-strong);border-left:none;border-radius:0 var(--radius-sm) var(--radius-sm) 0;padding:10px 12px;font-family:var(--font-mono);font-size:12px;color:var(--blue);white-space:nowrap">
+              @store.cashier.pro
+            </span>
+          </div>
+          <small style="color:var(--text-3);font-size:11px;margin-top:4px;display:block" id="cashierUsernameHint">
+            Full login: <strong id="cashierFullLoginPreview" style="color:var(--blue)">—</strong>
+          </small>
+        </div>
+        <div class="form-group" style="margin-bottom:14px">
+          <label class="form-label">Password *</label>
+          <input class="form-input" id="cashierFormPassword" type="password" placeholder="Set a login password" />
+        </div>
+        <div class="form-group" style="margin-bottom:6px">
+          <label class="form-label">Role</label>
+          <select class="form-select" id="cashierFormRole">
+            <option value="cashier">Cashier</option>
+            <option value="senior">Senior Cashier</option>
+            <option value="supervisor">Supervisor</option>
+          </select>
+        </div>
+        <div class="cashier-login-hint" style="margin-top:14px">
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--blue);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">📌 Login Format</div>
+          <div style="font-family:var(--font-mono);font-size:12px;color:var(--text)" id="cashierLoginFormatHint">username@storeid.cashier.pro</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Each cashier has their own unique subdomain login</div>
         </div>
       </div>
       <div class="modal-footer">
@@ -1118,34 +1149,101 @@
 <script src="customer.js"></script>
 <script src="auth.js"></script>
 
-<!-- Shop Companion 3.0 Extensions -->
+<!-- Shop Companion 3.0 Extensions — FIXED v3.1 -->
 <script>
-/* ── NEW: Client Scan Tab Logic ── */
-let _clientScanner = null;
+/* ══════════════════════════════════════════════════════════════
+   SCANNER FIX — Per-tab independent scanner instances
+   Each scan tab gets its own ZXing reader so they don't conflict.
+   ══════════════════════════════════════════════════════════════ */
 
+/* Per-tab scanner state (avoids shared Scanner singleton conflicts) */
+const ScannerInstances = {};
+
+async function startTabScanner(instanceKey, videoElId, statusElId, onDecode) {
+  // Stop any existing instance for this key
+  await stopTabScanner(instanceKey);
+
+  const video    = document.getElementById(videoElId);
+  const statusEl = document.getElementById(statusElId);
+  if (!video) { console.warn('No video element:', videoElId); return; }
+  if (statusEl) statusEl.textContent = '🔄 Starting camera…';
+
+  try {
+    const ZXing = window.ZXing;
+    if (!ZXing) throw new Error('ZXing library not loaded. Check CDN or network.');
+
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.QR_CODE,
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.ITF,
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+
+    const reader = new ZXing.BrowserMultiFormatReader(hints);
+    let cooldown = false;
+
+    ScannerInstances[instanceKey] = { reader, active: true };
+
+    await reader.decodeFromVideoDevice(null, video, (result, err) => {
+      if (!ScannerInstances[instanceKey]?.active) return;
+      if (result && !cooldown) {
+        cooldown = true;
+        setTimeout(() => { cooldown = false; }, 1500);
+        const code = result.getText();
+        if (statusEl) statusEl.textContent = '✅ Scanned: ' + code;
+        onDecode(code);
+      }
+    });
+
+    if (statusEl && ScannerInstances[instanceKey]?.active) {
+      statusEl.textContent = '📷 Camera active — point at barcode or QR code';
+    }
+  } catch (err) {
+    console.warn('Scanner error [' + instanceKey + ']:', err);
+    const msg = err.message && err.message.toLowerCase().includes('permission')
+      ? '🚫 Camera permission denied. Allow camera access in browser settings, then retry.'
+      : `📷 Camera unavailable: ${err.message || err}`;
+    if (statusEl) statusEl.textContent = msg;
+    toast(msg, 'error');
+    delete ScannerInstances[instanceKey];
+  }
+}
+
+async function stopTabScanner(instanceKey) {
+  const inst = ScannerInstances[instanceKey];
+  if (!inst) return;
+  inst.active = false;
+  try { inst.reader?.reset(); } catch(e) { /* ignore */ }
+  delete ScannerInstances[instanceKey];
+}
+
+/* ── CLIENT Scan Tab ── */
 function startClientScanner() {
-  const video = document.getElementById('clientScanVideo');
-  const status = document.getElementById('clientScanStatus');
-  if (!video) return;
-  if (status) status.textContent = '📷 Starting camera…';
-  Scanner.start(video, (code) => {
-    if (status) status.textContent = '✅ Scanned: ' + code;
-    document.getElementById('clientBarcodeField').value = code;
+  startTabScanner('client', 'clientScanVideo', 'clientScanStatus', (code) => {
+    const field = document.getElementById('clientBarcodeField');
+    if (field) field.value = code;
     processClientBarcode();
     toast('Barcode scanned: ' + code, 'success');
-  }).catch(e => toast('Camera error: ' + e.message, 'error'));
+  });
 }
 
 function stopClientScanner() {
-  Scanner.stop();
+  stopTabScanner('client');
   const status = document.getElementById('clientScanStatus');
   if (status) status.textContent = '📷 Camera stopped';
 }
 
 function clientManualBarcode() {
   const val = prompt('Enter barcode manually:');
-  if (val) {
-    document.getElementById('clientBarcodeField').value = val.trim();
+  if (val && val.trim()) {
+    const field = document.getElementById('clientBarcodeField');
+    if (field) field.value = val.trim();
     processClientBarcode();
   }
 }
@@ -1156,23 +1254,29 @@ function processClientBarcode() {
   if (!barcode || !result) return;
 
   const storeId = AuthState.currentUser?.storeId || 'grocery';
-  const inv = MultiStore.getInventory(storeId);
+  const inv     = MultiStore.getInventory(storeId);
   const product = inv.find(p => p.barcode === barcode);
 
   if (product) {
+    const stockColor = product.stock === 0 ? 'var(--red)'
+                     : product.stock <= (product.lowStockAt || 10) ? 'var(--yellow)'
+                     : 'var(--green)';
     result.innerHTML = `
       <div class="card" style="border-color:var(--green);background:var(--green-pale)">
         <div style="font-size:2rem;text-align:center;margin-bottom:8px">${product.image || '📦'}</div>
         <div style="font-weight:700;font-size:1rem;text-align:center;color:var(--text)">${product.name}</div>
-        <div style="text-align:center;color:var(--text-3);font-size:12px;margin-bottom:12px">${product.category} · ${product.type}</div>
+        <div style="text-align:center;color:var(--text-3);font-size:12px;margin-bottom:12px">${product.category} · ${product.type || ''}</div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+          <span>Barcode:</span><span style="font-family:var(--font-mono);color:var(--text-3)">${product.barcode}</span>
+        </div>
         <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
           <span>Price:</span><span style="font-family:var(--font-mono);color:var(--blue);font-weight:700">₱${product.price.toFixed(2)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:14px">
-          <span>Stock:</span><span style="font-family:var(--font-mono);font-weight:700;color:${product.stock <= (product.lowStockAt||10) ? 'var(--yellow)':'var(--green)'}">${product.stock} ${product.unit || 'pcs'}</span>
+          <span>Stock:</span><span style="font-family:var(--font-mono);font-weight:700;color:${stockColor}">${product.stock} ${product.unit || 'pcs'}</span>
         </div>
-        <div style="display:flex;gap:8px">
-          <input class="form-input" type="number" id="scanStockAdd" placeholder="Add qty" min="1" value="1" style="width:100px" />
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input class="form-input" type="number" id="scanStockAdd" placeholder="Add qty" min="1" value="1" style="width:90px" />
           <button class="btn btn-primary btn-sm" onclick="addStockFromScan('${product.id}')">+ Add Stock</button>
           <button class="btn btn-ghost btn-sm" onclick="openEditProductFromScan('${product.id}')">✏️ Edit</button>
         </div>
@@ -1183,24 +1287,27 @@ function processClientBarcode() {
         <div style="text-align:center;margin-bottom:12px">
           <div style="font-size:1.5rem">❓</div>
           <div style="font-weight:700;color:var(--text)">Product Not Found</div>
-          <div style="font-size:12px;color:var(--text-3);margin-top:4px">Barcode: ${barcode}</div>
+          <div style="font-size:12px;color:var(--text-3);margin-top:4px">Barcode: <strong style="font-family:var(--font-mono)">${barcode}</strong></div>
         </div>
-        <button class="btn btn-primary w-full" onclick="openAddProductWithBarcode('${barcode}')">+ Add New Product</button>
+        <button class="btn btn-primary w-full" onclick="openAddProductWithBarcode('${barcode}')">+ Add as New Product</button>
       </div>`;
   }
 }
 
 function addStockFromScan(productId) {
-  const qty = parseInt(document.getElementById('scanStockAdd')?.value) || 1;
+  const qty     = parseInt(document.getElementById('scanStockAdd')?.value) || 1;
   const storeId = AuthState.currentUser?.storeId || 'grocery';
-  const inv = MultiStore.getInventory(storeId);
-  const idx = inv.findIndex(p => p.id === productId);
+  const inv     = MultiStore.getInventory(storeId);
+  const idx     = inv.findIndex(p => p.id === productId);
   if (idx === -1) return;
   inv[idx].stock += qty;
   MultiStore.saveInventory(storeId, inv);
+  Store.set('inventory', inv);
   toast(`Added ${qty} units to ${inv[idx].name}`, 'success');
-  document.getElementById('clientBarcodeField').value = inv[idx].barcode || '';
+  const field = document.getElementById('clientBarcodeField');
+  if (field) field.value = inv[idx].barcode || '';
   processClientBarcode();
+  renderClientInventory?.();
 }
 
 function openAddProductWithBarcode(barcode) {
@@ -1208,37 +1315,34 @@ function openAddProductWithBarcode(barcode) {
   setTimeout(() => {
     const field = document.getElementById('pBarcode');
     if (field) field.value = barcode;
-  }, 50);
+  }, 80);
 }
 
 function openEditProductFromScan(productId) {
-  openEditProductModal('client', productId);
+  openEditProductModal(productId, 'client');
 }
 
-/* ── NEW: Cashier Scan Tab Logic ── */
+/* ── CASHIER Scan Tab ── */
 function startCashierScanTab() {
-  const video = document.getElementById('cashierScanTabVideo');
-  const status = document.getElementById('cashierScanTabStatus');
-  if (!video) return;
-  if (status) status.textContent = '📷 Starting camera…';
-  Scanner.start(video, (code) => {
-    if (status) status.textContent = '✅ Scanned: ' + code;
-    document.getElementById('cashierBarcodeField').value = code;
+  startTabScanner('cashier-scan', 'cashierScanTabVideo', 'cashierScanTabStatus', (code) => {
+    const field = document.getElementById('cashierBarcodeField');
+    if (field) field.value = code;
     processCashierBarcode();
     toast('Barcode scanned: ' + code, 'success');
   });
 }
 
 function stopCashierScanTab() {
-  Scanner.stop();
+  stopTabScanner('cashier-scan');
   const status = document.getElementById('cashierScanTabStatus');
   if (status) status.textContent = '📷 Camera stopped';
 }
 
 function cashierManualBarcode() {
   const val = prompt('Enter barcode manually:');
-  if (val) {
-    document.getElementById('cashierBarcodeField').value = val.trim();
+  if (val && val.trim()) {
+    const field = document.getElementById('cashierBarcodeField');
+    if (field) field.value = val.trim();
     processCashierBarcode();
   }
 }
@@ -1249,67 +1353,62 @@ function processCashierBarcode() {
   if (!barcode || !result) return;
 
   const storeId = AuthState.currentUser?.storeId || 'grocery';
-  const inv = MultiStore.getInventory(storeId);
+  const inv     = MultiStore.getInventory(storeId);
   const product = inv.find(p => p.barcode === barcode);
 
   if (product) {
-    const stockColor = product.stock === 0 ? 'var(--red)' : product.stock <= (product.lowStockAt||10) ? 'var(--yellow)' : 'var(--green)';
+    const stockColor = product.stock === 0 ? 'var(--red)'
+                     : product.stock <= (product.lowStockAt || 10) ? 'var(--yellow)'
+                     : 'var(--green)';
     result.innerHTML = `
-      <div class="card" style="border-color:var(--blue-pale)">
+      <div class="card" style="border-color:var(--blue);background:rgba(26,95,212,0.06)">
         <div style="font-size:2rem;text-align:center;margin-bottom:8px">${product.image || '📦'}</div>
         <div style="font-weight:700;font-size:1rem;text-align:center">${product.name}</div>
         <div style="text-align:center;color:var(--text-3);font-size:12px;margin-bottom:10px">${product.category}</div>
         <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:13px">
+          <span>Barcode:</span><span style="font-family:var(--font-mono);color:var(--text-3)">${product.barcode}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:13px">
           <span>Price:</span><span style="font-family:var(--font-mono);color:var(--blue);font-weight:700">₱${product.price.toFixed(2)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;margin-bottom:14px;font-size:13px">
-          <span>Stock:</span><span style="font-family:var(--font-mono);font-weight:700;color:${stockColor}">${product.stock}</span>
+          <span>Stock:</span><span style="font-family:var(--font-mono);font-weight:700;color:${stockColor}">${product.stock} ${product.unit || 'pcs'}</span>
         </div>
-        <button class="btn btn-primary w-full btn-sm" onclick="addToCartFromCashierScan('${product.id}')">+ Add to Cart Entry</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="openEditProductModal('${product.id}','cashier')">✏️ Edit Product</button>
+          <button class="btn btn-primary btn-sm" onclick="cashierSwitchTab('cashier-checkout',document.querySelector('[data-tab=cashier-checkout]'))">→ Go to Checkout</button>
+        </div>
       </div>`;
   } else {
     result.innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">❓</div>
-        <p>Product not found for barcode:<br/><strong style="font-family:var(--font-mono)">${barcode}</strong></p>
-        <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="openAddProductModal('cashier')">+ Add Product</button>
+        <p>No product found for barcode:<br/><strong style="font-family:var(--font-mono)">${barcode}</strong></p>
+        <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="openAddProductModal('cashier')">+ Add New Product</button>
       </div>`;
   }
 }
 
-function addToCartFromCashierScan(productId) {
-  toast('Product identified. Use Checkout tab to process customer orders.', 'info');
-}
-
-/* ── OVERRIDE cashierSwitchTab to handle new scan tab ── */
-const _origCashierSwitch = (typeof cashierSwitchTab !== 'undefined') ? cashierSwitchTab : null;
+/* ── OVERRIDE tab switches to stop scanners cleanly ── */
 function cashierSwitchTab(tab, el) {
-  try {
-    if (typeof switchPanelTab === 'function') switchPanelTab('cashier', tab, el);
-  } catch(e) { console.warn(e); }
+  try { switchPanelTab('cashier', tab, el); } catch(e) { console.warn(e); }
   if (tab === 'cashier-dashboard') renderCashierDashboard?.();
   if (tab === 'cashier-inventory') renderCashierInventory?.();
-  if (tab !== 'cashier-checkout') stopCheckoutScanner?.();
-  if (tab !== 'cashier-scan') stopCashierScanTab?.();
+  if (tab !== 'cashier-checkout')  stopCheckoutScanner?.();
+  if (tab !== 'cashier-scan')      stopCashierScanTab();
 }
 
-/* ── OVERRIDE clientSwitchTab to handle new scan tab ── */
 function clientSwitchTab(tab, el) {
-  try {
-    if (typeof switchPanelTab === 'function') switchPanelTab('client', tab, el);
-  } catch(e) { console.warn(e); }
+  try { switchPanelTab('client', tab, el); } catch(e) { console.warn(e); }
   if (tab === 'client-dashboard') renderClientDashboard?.();
   if (tab === 'client-inventory') renderClientInventory?.();
   if (tab === 'client-orders')    renderOrders?.();
   if (tab === 'client-cashiers')  renderCashiersTable?.();
-  if (tab !== 'client-scan') stopClientScanner?.();
+  if (tab !== 'client-scan')      stopClientScanner();
 }
 
-/* ── devSwitchTab ── */
 function devSwitchTab(tab, el) {
-  try {
-    if (typeof switchPanelTab === 'function') switchPanelTab('dev', tab, el);
-  } catch(e) {
+  try { switchPanelTab('dev', tab, el); } catch(e) {
     document.querySelectorAll('#view-dev .tab-panel').forEach(p => p.classList.add('hidden'));
     document.getElementById('tab-' + tab)?.classList.remove('hidden');
     document.querySelectorAll('#view-dev .nav-item').forEach(n => n.classList.remove('active'));
@@ -1321,34 +1420,133 @@ function devSwitchTab(tab, el) {
   if (tab === 'dev-stores')        { renderDevStoreMonitor?.(); renderDevInventoryTable?.(); updateDevStoreStats?.(); }
 }
 
-/* ── Cashier Management ── */
+/* ══════════════════════════════════════════════════════════════
+   CASHIER MANAGEMENT — Full per-cashier subdomain username
+   ══════════════════════════════════════════════════════════════ */
+
+function _getCashierStoreSlug() {
+  const storeId = AuthState.currentUser?.storeId || 'store';
+  return storeId;
+}
+
+function _buildCashierLogin(username, storeSlug) {
+  return `${username}@${storeSlug}.cashier.pro`;
+}
+
+/* Live username preview in modal */
+function updateCashierUsernamePreview() {
+  const name    = document.getElementById('cashierFormName')?.value.trim() || '';
+  const slug    = name.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24);
+  const userEl  = document.getElementById('cashierFormUsername');
+  if (userEl && !userEl._manuallyEdited) userEl.value = slug;
+  _refreshCashierLoginPreview();
+}
+
+function sanitizeCashierUsername(input) {
+  input._manuallyEdited = true;
+  input.value = input.value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  _refreshCashierLoginPreview();
+}
+
+function _refreshCashierLoginPreview() {
+  const username   = document.getElementById('cashierFormUsername')?.value.trim() || '';
+  const storeSlug  = _getCashierStoreSlug();
+  const suffixEl   = document.getElementById('cashierUsernameSuffix');
+  const previewEl  = document.getElementById('cashierFullLoginPreview');
+  const formatEl   = document.getElementById('cashierLoginFormatHint');
+
+  if (suffixEl)  suffixEl.textContent  = `@${storeSlug}.cashier.pro`;
+  const full = username ? _buildCashierLogin(username, storeSlug) : '—';
+  if (previewEl) previewEl.textContent  = full;
+  if (formatEl)  formatEl.textContent   = `username@${storeSlug}.cashier.pro`;
+}
+
 function openAddCashierModal() {
   openModal('modal-cashier');
-  document.getElementById('cashierFormName').value = '';
-  const storeId = AuthState.currentUser?.storeId;
-  const hint = document.getElementById('cashierLoginFormatHint');
-  if (hint) hint.textContent = storeId ? `${storeId}@cashier.pro` : 'storename@cashier.pro';
+  const nameEl = document.getElementById('cashierFormName');
+  const userEl = document.getElementById('cashierFormUsername');
+  const passEl = document.getElementById('cashierFormPassword');
+  const roleEl = document.getElementById('cashierFormRole');
+  if (nameEl) nameEl.value = '';
+  if (userEl) { userEl.value = ''; userEl._manuallyEdited = false; }
+  if (passEl) passEl.value = '';
+  if (roleEl) roleEl.value = 'cashier';
+  _refreshCashierLoginPreview();
+  setTimeout(() => nameEl?.focus(), 80);
 }
 
 function saveCashierAccount() {
-  const name = document.getElementById('cashierFormName')?.value.trim();
-  if (!name) { toast('Please enter a cashier name', 'warning'); return; }
+  const name     = document.getElementById('cashierFormName')?.value.trim();
+  const username = document.getElementById('cashierFormUsername')?.value.trim();
+  const password = document.getElementById('cashierFormPassword')?.value.trim();
+  const role     = document.getElementById('cashierFormRole')?.value || 'cashier';
+
+  if (!name)     { toast('Please enter the cashier name', 'warning'); return; }
+  if (!username) { toast('Please enter a username/subdomain', 'warning'); return; }
+  if (!password) { toast('Please set a login password', 'warning'); return; }
+
   const user = AuthState.currentUser;
-  if (!user?.email) { toast('Not logged in', 'error'); return; }
-  const cashiers = MultiStore.getCashiers(user.email);
-  cashiers.push({ id: 'CSH' + Date.now().toString().slice(-5), name, added: new Date().toISOString().slice(0,10), status: 'active' });
+  if (!user?.email) { toast('Not logged in as client', 'error'); return; }
+
+  const storeSlug  = _getCashierStoreSlug();
+  const loginEmail = _buildCashierLogin(username, storeSlug);
+  const cashiers   = MultiStore.getCashiers(user.email);
+
+  // Check for duplicate username
+  if (cashiers.some(c => c.username === username)) {
+    toast(`Username "${username}" already taken. Choose another.`, 'warning');
+    return;
+  }
+
+  const newCashier = {
+    id:          'CSH' + Date.now().toString().slice(-6),
+    name,
+    username,
+    loginEmail,
+    password,
+    role,
+    storeSlug,
+    added:       new Date().toISOString().slice(0, 10),
+    status:      'active'
+  };
+
+  cashiers.push(newCashier);
   MultiStore.saveCashiers(user.email, cashiers);
+
+  // Also register this cashier in AUTH_CONFIG so they can actually log in
+  _registerCashierInAuth(loginEmail, password, storeSlug, user.storeId, user.storeName);
+
   closeModal('modal-cashier');
   renderCashiersTable();
-  toast(`Cashier "${name}" added`, 'success');
+  toast(`Cashier "${name}" added — login: ${loginEmail}`, 'success');
+}
+
+function _registerCashierInAuth(loginEmail, password, storeSlug, storeId, storeName) {
+  // Persist custom cashier credentials in localStorage so login works
+  try {
+    const customCashiers = JSON.parse(localStorage.getItem('sc_custom_cashiers') || '{}');
+    customCashiers[loginEmail] = { password, storeId, storeName };
+    localStorage.setItem('sc_custom_cashiers', JSON.stringify(customCashiers));
+  } catch(e) { console.warn('Could not save custom cashier credentials', e); }
 }
 
 function deleteCashierAccount(id) {
-  if (!confirm('Remove this cashier?')) return;
+  if (!confirm('Remove this cashier account? They will no longer be able to log in.')) return;
   const user = AuthState.currentUser;
   if (!user?.email) return;
-  const cashiers = MultiStore.getCashiers(user.email).filter(c => c.id !== id);
-  MultiStore.saveCashiers(user.email, cashiers);
+  const cashiers = MultiStore.getCashiers(user.email);
+  const toRemove = cashiers.find(c => c.id === id);
+  const updated  = cashiers.filter(c => c.id !== id);
+  MultiStore.saveCashiers(user.email, updated);
+
+  // Remove from auth registry
+  if (toRemove?.loginEmail) {
+    try {
+      const customCashiers = JSON.parse(localStorage.getItem('sc_custom_cashiers') || '{}');
+      delete customCashiers[toRemove.loginEmail];
+      localStorage.setItem('sc_custom_cashiers', JSON.stringify(customCashiers));
+    } catch(e) {}
+  }
   renderCashiersTable();
   toast('Cashier removed', 'info');
 }
@@ -1358,167 +1556,187 @@ function renderCashiersTable() {
   if (!tbody) return;
   const user = AuthState.currentUser;
   if (!user?.email) return;
-  const storeId = user.storeId;
-  const loginEmail = storeId ? `${storeId}@cashier.pro` : '—';
-  const hintEl = document.getElementById('cashierLoginEmail');
-  if (hintEl) hintEl.textContent = loginEmail;
+
+  const storeSlug   = _getCashierStoreSlug();
+  const loginFormat = `username@${storeSlug}.cashier.pro`;
+  const hintEl      = document.getElementById('cashierLoginEmail');
+  if (hintEl) hintEl.textContent = loginFormat;
+
   const cashiers = MultiStore.getCashiers(user.email);
+
   if (!cashiers.length) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px">No cashier accounts yet. Add one above.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:32px">
+      <div style="font-size:1.5rem;margin-bottom:8px">🧾</div>
+      <div>No cashier accounts yet.</div>
+      <div style="font-size:12px;color:var(--text-3);margin-top:6px">Click <strong>+ Add Cashier</strong> to create one.</div>
+    </td></tr>`;
     return;
   }
+
   tbody.innerHTML = cashiers.map(c => `
     <tr>
       <td style="font-weight:600">${c.name}</td>
-      <td style="font-family:var(--font-mono);color:var(--blue)">${loginEmail}</td>
-      <td style="color:var(--text-3)">${c.added}</td>
-      <td><span class="badge ${c.status==='active'?'badge-green':'badge-gray'}">${c.status}</span></td>
-      <td><button class="btn btn-danger btn-sm" onclick="deleteCashierAccount('${c.id}')">Remove</button></td>
+      <td style="font-family:var(--font-mono);color:var(--blue);font-size:12px">${c.loginEmail || c.username + '@' + (c.storeSlug || storeSlug) + '.cashier.pro'}</td>
+      <td><span class="badge badge-gray" style="font-size:10px;text-transform:capitalize">${c.role || 'cashier'}</span></td>
+      <td style="color:var(--text-3);font-size:12px">${c.added}</td>
+      <td><span class="badge ${c.status === 'active' ? 'badge-green' : 'badge-gray'}">${c.status}</span></td>
+      <td>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" onclick="toggleCashierStatus('${c.id}')">
+            ${c.status === 'active' ? '⏸ Suspend' : '▶ Activate'}
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="deleteCashierAccount('${c.id}')">Remove</button>
+        </div>
+      </td>
     </tr>
   `).join('');
 }
 
-/* ── Dev Store Stats ── */
-function updateDevStoreStats() {
-  let totalProducts = 0, totalLow = 0, totalOrders = 0;
-  ['grocery','toy','school'].forEach(sid => {
-    const inv  = MultiStore.getInventory(sid);
-    const ords = MultiStore.getOrders(sid);
-    totalProducts += inv.length;
-    totalLow      += inv.filter(p => p.stock > 0 && p.stock <= (p.lowStockAt||10)).length;
-    totalOrders   += ords.length;
+function toggleCashierStatus(id) {
+  const user = AuthState.currentUser;
+  if (!user?.email) return;
+  const cashiers = MultiStore.getCashiers(user.email).map(c => {
+    if (c.id === id) c.status = c.status === 'active' ? 'suspended' : 'active';
+    return c;
   });
-  const tp = document.getElementById('devTotalProducts');
-  const tl = document.getElementById('devTotalLowStock');
-  const to = document.getElementById('devTotalOrders');
-  if (tp) tp.textContent = totalProducts;
-  if (tl) tl.textContent = totalLow;
-  if (to) to.textContent = totalOrders;
+  MultiStore.saveCashiers(user.email, cashiers);
+  renderCashiersTable();
 }
 
-function renderDevInventoryTable() {
-  const sel = document.getElementById('devStoreFilter');
-  const storeId = sel ? sel.value : 'grocery';
-  const inv = MultiStore.getInventory(storeId);
-  const tbody = document.getElementById('devInvTableBody');
-  if (!tbody) return;
-  if (!inv.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px">No products found</td></tr>`;
-    return;
-  }
-  tbody.innerHTML = inv.map(p => {
-    const low = p.stock > 0 && p.stock <= (p.lowStockAt||10);
-    const out = p.stock === 0;
-    const statusClass = out ? 'badge-red' : low ? 'badge-yellow' : 'badge-green';
-    const statusText  = out ? 'Out of Stock' : low ? 'Low Stock' : 'In Stock';
-    const expiryText  = p.expiry ? formatDateShort(p.expiry) : '—';
-    return `<tr>
-      <td style="color:var(--text-muted);font-family:var(--font-mono)">${p.id}</td>
-      <td style="font-weight:500">${p.image || ''} ${p.name}</td>
-      <td>${p.category}</td>
-      <td style="font-family:var(--font-mono);color:var(--blue)">₱${p.price.toFixed(2)}</td>
-      <td style="font-family:var(--font-mono);font-weight:600">${p.stock}</td>
-      <td><span class="badge ${statusClass}">${statusText}</span></td>
-      <td style="color:var(--text-muted)">${expiryText}</td>
-    </tr>`;
-  }).join('');
+/* Seed demo cashiers for each demo store on first use */
+function seedDemoCashiers() {
+  const demoAccounts = {
+    'jdcgrocery@pro': {
+      storeId: 'grocery', storeName: 'JDC Grocery',
+      cashiers: [
+        { id: 'CSH001', name: 'Maria Santos',  username: 'mariasantos',  loginEmail: 'mariasantos@grocery.cashier.pro',  password: 'Maria123',  role: 'senior',     storeSlug: 'grocery', added: '2025-01-15', status: 'active' },
+        { id: 'CSH002', name: 'Pedro Reyes',   username: 'pedroreyes',   loginEmail: 'pedroreyes@grocery.cashier.pro',   password: 'Pedro123',  role: 'cashier',    storeSlug: 'grocery', added: '2025-02-10', status: 'active' },
+        { id: 'CSH003', name: 'Ana Villanueva',username: 'anavillanueva',loginEmail: 'anavillanueva@grocery.cashier.pro',password: 'Ana123',    role: 'cashier',    storeSlug: 'grocery', added: '2025-03-05', status: 'active' },
+        { id: 'CSH004', name: 'Rico Dela Cruz', username: 'ricodc',      loginEmail: 'ricodc@grocery.cashier.pro',       password: 'Rico123',   role: 'supervisor', storeSlug: 'grocery', added: '2025-01-01', status: 'active' },
+      ]
+    },
+    'toystore@pro': {
+      storeId: 'toy', storeName: 'Toy Kingdom',
+      cashiers: [
+        { id: 'CSH101', name: 'Lina Gomez',    username: 'linagomez',    loginEmail: 'linagomez@toy.cashier.pro',     password: 'Lina123',   role: 'senior',  storeSlug: 'toy', added: '2025-01-20', status: 'active' },
+        { id: 'CSH102', name: 'Bong Aquino',   username: 'bongaquino',   loginEmail: 'bongaquino@toy.cashier.pro',    password: 'Bong123',   role: 'cashier', storeSlug: 'toy', added: '2025-02-15', status: 'active' },
+        { id: 'CSH103', name: 'Claire Tan',    username: 'clairetan',    loginEmail: 'clairetan@toy.cashier.pro',     password: 'Claire123', role: 'cashier', storeSlug: 'toy', added: '2025-03-01', status: 'suspended' },
+      ]
+    },
+    'schoolsupplies@pro': {
+      storeId: 'school', storeName: 'School Hub',
+      cashiers: [
+        { id: 'CSH201', name: 'Donna Cruz',    username: 'donnacruz',    loginEmail: 'donnacruz@school.cashier.pro',  password: 'Donna123',  role: 'supervisor', storeSlug: 'school', added: '2025-01-10', status: 'active' },
+        { id: 'CSH202', name: 'Mark Lopez',    username: 'marklopez',    loginEmail: 'marklopez@school.cashier.pro',  password: 'Mark123',   role: 'cashier',    storeSlug: 'school', added: '2025-02-20', status: 'active' },
+      ]
+    }
+  };
+
+  Object.entries(demoAccounts).forEach(([clientEmail, data]) => {
+    const key = `sc_cashiers_${clientEmail}`;
+    if (!localStorage.getItem(key)) {
+      localStorage.setItem(key, JSON.stringify(data.cashiers));
+      // Register in auth
+      data.cashiers.forEach(c => {
+        _registerCashierInAuth(c.loginEmail, c.password, c.storeSlug, data.storeId, data.storeName);
+      });
+    }
+  });
 }
 
-/* ── Dev Customers (Extended with store activity) ── */
-let _devCustData = [];
-function renderDevCustomers() {
-  const tbody = document.getElementById('devCustomersBody');
-  if (!tbody) return;
-  const globalCustomers = JSON.parse(localStorage.getItem('sc_global_customers') || '[]');
-  _devCustData = globalCustomers.length ? globalCustomers : [
-    { id: 'GC001', name: 'Mark Santos', email: 'mark@gmail.com', joined: '2025-01-10', lastLogin: '2025-05-14', totalOrders: 5, points: 50 },
-    { id: 'GC002', name: 'Ana Reyes',   email: 'ana@gmail.com',  joined: '2025-02-03', lastLogin: '2025-05-10', totalOrders: 3, points: 30 },
-  ];
-  _renderDevCustTable(_devCustData);
+/* Patch attemptLogin to also check custom cashiers from localStorage */
+function _patchCashierLogin() {
+  const origAttemptLogin = window.attemptLogin;
+  window.attemptLogin = function(role) {
+    if (role === 'cashier') {
+      const email    = (document.getElementById('authEmail')?.value || '').trim().toLowerCase();
+      const password = document.getElementById('authPassword')?.value || '';
+      // Check custom (client-added) cashiers first
+      try {
+        const customCashiers = JSON.parse(localStorage.getItem('sc_custom_cashiers') || '{}');
+        if (customCashiers[email]) {
+          const acct = customCashiers[email];
+          // Check if suspended
+          const isSuspended = _isCashierSuspended(email);
+          if (isSuspended) {
+            toast('This cashier account has been suspended. Contact your store manager.', 'error');
+            return;
+          }
+          if (acct.password === password) {
+            const store = STORE_DEFINITIONS[acct.storeId];
+            AuthState.set('cashier', { email, storeId: acct.storeId, storeName: acct.storeName, role: 'cashier' }, store);
+            loginSuccess('cashier', acct.storeId, acct.storeName);
+            return;
+          } else {
+            loginFail();
+            return;
+          }
+        }
+      } catch(e) { console.warn(e); }
+    }
+    origAttemptLogin.apply(this, arguments);
+  };
 }
 
-function _renderDevCustTable(data) {
-  const tbody = document.getElementById('devCustomersBody');
-  if (!tbody) return;
-  if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted)">No customers registered yet.</td></tr>`;
-    return;
-  }
-  tbody.innerHTML = data.map(c => `
-    <tr>
-      <td style="font-family:var(--font-mono);color:var(--blue)">${c.email || '—'}</td>
-      <td style="font-weight:600">${c.name || '—'}</td>
-      <td style="color:var(--text-3)">${c.joined || '—'}</td>
-      <td style="color:var(--text-3)">${c.lastLogin || '—'}</td>
-      <td style="font-family:var(--font-mono);color:var(--green);font-weight:700">${c.totalOrders ?? 0}</td>
-      <td style="font-family:var(--font-mono);color:var(--yellow);font-weight:700">${c.points ?? 0}</td>
-      <td><span class="badge badge-green">Registered</span></td>
-    </tr>
-  `).join('');
+function _isCashierSuspended(loginEmail) {
+  try {
+    const allKeys = Object.keys(localStorage);
+    for (const key of allKeys) {
+      if (!key.startsWith('sc_cashiers_')) continue;
+      const cashiers = JSON.parse(localStorage.getItem(key) || '[]');
+      const found    = cashiers.find(c => c.loginEmail === loginEmail);
+      if (found) return found.status === 'suspended';
+    }
+  } catch(e) {}
+  return false;
 }
 
-function filterDevCustomers() {
-  const q = (document.getElementById('devCustSearch')?.value || '').toLowerCase();
-  const filtered = q ? _devCustData.filter(c => (c.email||'').toLowerCase().includes(q) || (c.name||'').toLowerCase().includes(q)) : _devCustData;
-  _renderDevCustTable(filtered);
-}
+/* ══════════════════════════════════════════════════════════════
+   MISC HELPERS
+   ══════════════════════════════════════════════════════════════ */
 
-/* ── Dev Stat Card Helper ── */
-function devStatCard(icon, label, value, color) {
-  return `<div class="stat-card">
-    <div class="stat-icon ${color}">${icon}</div>
-    <div><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>
-  </div>`;
-}
-
-/* ── Update store badges in client sidebar ── */
-function updateStoreBadges(storeName, storeId) {
+/* updateStoreBadges / updateDevStoreStats / renderDevStoreMonitor
+   are already defined in admin.js / auth.js — we just need the
+   client-panel store strip helper here. */
+function updateStoreBadgesLocal(storeName, storeId) {
   document.querySelectorAll('.current-store-name').forEach(el => {
     el.textContent = storeName || 'Store';
   });
   const strip = document.getElementById('clientStoreStrip');
   if (strip) {
-    const defs = { grocery: {icon:'🛒',color:'var(--green)'}, toy: {icon:'🧸',color:'var(--yellow)'}, school: {icon:'📚',color:'var(--blue)'} };
-    const d = defs[storeId] || {icon:'🏪',color:'var(--blue)'};
+    const defs = {
+      grocery: { icon: '🛒', color: 'var(--green)' },
+      toy:     { icon: '🧸', color: 'var(--yellow)' },
+      school:  { icon: '📚', color: 'var(--blue)' }
+    };
+    const d = defs[storeId] || { icon: '🏪', color: 'var(--blue)' };
     strip.innerHTML = `<span class="store-badge" style="background:${d.color}20;border-color:${d.color}40;color:${d.color}">${d.icon} ${storeName}</span>`;
   }
-  const custLabelEl = document.getElementById('custStoreLabel');
-  if (custLabelEl) custLabelEl.textContent = storeId ? `Shopping at ${storeName}` : 'Customer View';
-  const custStoreBtn = document.getElementById('custStoreBtn');
-  if (custStoreBtn && storeId) custStoreBtn.style.display = '';
 }
 
-/* ── Switch store for customer ── */
-function switchStore() {
-  if (AuthState.currentStore) {
-    try { MultiStore.saveCart(AuthState.currentStore.id, cart); } catch(e) {}
-  }
-  const user = AuthState.currentUser || { name: 'Guest' };
-  showStoreSelector(user);
-}
-
-/* ── Mobile bottom nav sync ── */
-function syncBottomNav(activeBtn) {
-  const tab = activeBtn?.dataset.tab;
-  document.querySelectorAll('.cust-bnav-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
-  document.querySelectorAll('.cust-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-}
-
-// Mirror cart badge to bottom nav
+/* Mirror cart badge to bottom nav */
 (function watchCartBadge() {
   const src  = document.getElementById('cartBadge');
   const dest = document.getElementById('bnavCartBadge');
   if (!src || !dest) return;
-  new MutationObserver(() => { dest.textContent = src.textContent; }).observe(src, { childList: true, characterData: true, subtree: true });
+  new MutationObserver(() => { dest.textContent = src.textContent; })
+    .observe(src, { childList: true, characterData: true, subtree: true });
   dest.textContent = src.textContent;
 })();
 
-// Sync desktop tab clicks to bottom nav
+/* Sync desktop tab clicks to bottom nav */
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.cust-tab').forEach(tab => {
     tab.addEventListener('click', () => syncBottomNav(tab));
   });
+
+  /* Seed demo cashiers after DOM ready */
+  setTimeout(() => {
+    seedDemoCashiers();
+    _patchCashierLogin();
+  }, 300);
 });
 </script>
+
 </body>
 </html>
