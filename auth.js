@@ -37,7 +37,7 @@ const STORE_DEFINITIONS = {
     icon: '🛒',
     description: 'Fresh produce, beverages & household essentials',
     color: '#1de98b',
-    categories: ['Beverages', 'Snacks', 'Household Items', 'Hygiene'],
+    categories: ['Beverages', 'Snacks', 'Household Items'],
     inventory: [
       { id: 'GR001', name: 'Mineral Water (1.5L)',    barcode: 'GR8901234001', category: 'Beverages',       type: 'Water',          price: 25,  stock: 90, unit: 'bottle', image: '💧', expiry: '2027-01-01', lowStockAt: 20 },
       { id: 'GR002', name: 'Orange Juice (1L)',        barcode: 'GR8901234002', category: 'Beverages',       type: 'Fruit Juice',    price: 95,  stock: 35, unit: 'bottle', image: '🍊', expiry: '2025-09-15', lowStockAt: 8  },
@@ -54,9 +54,6 @@ const STORE_DEFINITIONS = {
       { id: 'GR013', name: 'Fabric Softener (350ml)', barcode: 'GR8901234013', category: 'Household Items', type: 'Laundry',        price: 75,  stock: 15, unit: 'bottle', image: '🌸', expiry: '2027-01-01', lowStockAt: 5  },
       { id: 'GR014', name: 'Toilet Tissue (12 rolls)',barcode: 'GR8901234014', category: 'Household Items', type: 'Paper Goods',    price: 145, stock: 40, unit: 'pack',   image: '🧻', expiry: '2028-01-01', lowStockAt: 8  },
       { id: 'GR015', name: 'Hand Soap (250ml)',        barcode: 'GR8901234015', category: 'Household Items', type: 'Personal Care',  price: 55,  stock: 8,  unit: 'bottle', image: '🧼', expiry: '2026-12-01', lowStockAt: 5  },
-      { id: 'GR016', name: 'Mineral Water (500ml)',    barcode: '4800049720114', category: 'Beverages',       type: 'Water',          price: 20,  stock: 60, unit: 'bottle', image: '💧', expiry: '2027-06-01', lowStockAt: 15 },
-      { id: 'GR017', name: 'Wipes',                   barcode: '4806525540948', category: 'Hygiene',         type: 'Wipes',          price: 45,  stock: 40, unit: 'pack',   image: '🧻', expiry: '2026-12-01', lowStockAt: 10 },
-      { id: 'GR018', name: 'Face Powder (50g)',        barcode: '4800047862533', category: 'Hygiene',         type: 'Cosmetics',      price: 120, stock: 25, unit: 'pack',   image: '🪥', expiry: '2027-03-01', lowStockAt: 5  },
     ]
   },
 
