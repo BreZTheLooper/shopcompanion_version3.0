@@ -1860,7 +1860,7 @@ function runWeightCheck(data, simulatedGrams) {
     const result = data.reweighCount > 0 ? 'passed_after_reweigh' : 'passed';
     data._weightResult  = result;
     data._weightBlocked = false;
-    window._pendingCheckoutData = null; // no longer blocked
+    window._pendingCheckoutData = data; // keep reference for completeCheckout
 
     bannerArea.innerHTML = `<div class="weight-banner pass">
       ✅ Weight verified — basket matches the cart.
@@ -1895,8 +1895,10 @@ function runWeightCheck(data, simulatedGrams) {
 }
 
 function reweighBtn(data) {
+  // Always keep data reference alive so the Weigh button never receives null
+  window._pendingCheckoutData = data;
   return `<button class="btn btn-ghost w-full" style="margin-top:12px"
-    onclick="document.getElementById('scaleSimPanel').classList.remove('hidden');document.getElementById('weightBannerArea').innerHTML='';document.getElementById('completeCheckoutArea').innerHTML='';window._pendingCheckoutData=window._pendingCheckoutData||${JSON.stringify({}).replace(/</g,'\\u003c')}">
+    onclick="document.getElementById('scaleSimPanel').classList.remove('hidden');document.getElementById('weightBannerArea').innerHTML='';document.getElementById('completeCheckoutArea').innerHTML='';">
     🔄 Re-weigh
   </button>`;
 }
