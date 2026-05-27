@@ -1,28 +1,24 @@
 /* ============================================================
    SHOP COMPANION 3.0 — Supabase Client & DB Helpers
-   Add this BEFORE shared.js, auth.js, admin.js in index.html:
-     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-     <script src="supabase.js"></script>
    ============================================================ */
+(function () {
+  'use strict';
 
-const SUPABASE_URL  = 'https://xuywopabnmwvfxswaqkc.supabase.co';
-const SUPABASE_ANON = 'sb_publishable_tJmUDAl_h4uJyqOgXWRuVA_TtolibM8';
+  const SUPABASE_URL  = 'https://xuywopabnmwvfxswaqkc.supabase.co';
+  const SUPABASE_ANON = 'sb_publishable_tJmUDAl_h4uJyqOgXWRuVA_TtolibM8';
 
-/* Guard against browser-extension re-declaration of 'supabase' in the same scope */
-if (typeof window._sc_supabase === 'undefined') {
-  window._sc_supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
-}
-const supabase = window._sc_supabase;
+  /* Create client once and store on window so other scripts can reach it */
+  if (!window._sc_supabase) {
+    window._sc_supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+  }
+  const _sb = window._sc_supabase;
 
-/* ============================================================
-   DB — All Supabase operations for Shop Companion
-   ============================================================ */
 const DB = {
 
   /* ── INVENTORY ── */
 
   async getInventory(storeId) {
-    const { data, error } = await supabase
+    const { data, error } = await _sb
       .from('inventory')
       .select('*')
       .eq('store_id', storeId);
@@ -32,14 +28,14 @@ const DB = {
 
   async upsertProduct(storeId, product) {
     const row = _toDBProduct(storeId, product);
-    const { error } = await supabase
+    const { error } = await _sb
       .from('inventory')
       .upsert(row, { onConflict: 'id' });
     if (error) console.error('[DB] upsertProduct:', error.message);
   },
 
   async deleteProduct(id) {
-    const { error } = await supabase
+    const { error } = await _sb
       .from('inventory')
       .delete()
       .eq('id', id);
@@ -47,7 +43,7 @@ const DB = {
   },
 
   async updateStock(id, newStock) {
-    const { error } = await supabase
+    const { error } = await _sb
       .from('inventory')
       .update({ stock: newStock })
       .eq('id', id);
@@ -57,7 +53,7 @@ const DB = {
   /* ── CASHIERS ── */
 
   async getCashiers(clientEmail) {
-    const { data, error } = await supabase
+    const { data, error } = await _sb
       .from('cashiers')
       .select('*')
       .eq('client_email', clientEmail);
@@ -67,14 +63,14 @@ const DB = {
 
   async upsertCashier(clientEmail, cashier) {
     const row = _toDBCashier(clientEmail, cashier);
-    const { error } = await supabase
+    const { error } = await _sb
       .from('cashiers')
       .upsert(row, { onConflict: 'id' });
     if (error) console.error('[DB] upsertCashier:', error.message);
   },
 
   async deleteCashier(id) {
-    const { error } = await supabase
+    const { error } = await _sb
       .from('cashiers')
       .delete()
       .eq('id', id);
@@ -82,7 +78,7 @@ const DB = {
   },
 
   async updateCashierStatus(id, status) {
-    const { error } = await supabase
+    const { error } = await _sb
       .from('cashiers')
       .update({ status })
       .eq('id', id);
@@ -90,7 +86,7 @@ const DB = {
   },
 
   async loginCashier(loginEmail, password) {
-    const { data, error } = await supabase
+    const { data, error } = await _sb
       .from('cashiers')
       .select('*')
       .eq('login_email', loginEmail.toLowerCase().trim())
@@ -103,7 +99,7 @@ const DB = {
   /* ── CUSTOMERS ── */
 
   async getCustomers() {
-    const { data, error } = await supabase
+    const { data, error } = await _sb
       .from('customers')
       .select('*')
       .order('joined', { ascending: false });
@@ -114,7 +110,7 @@ const DB = {
   /* FIX: fetch a single customer by id — avoids loading all customers
      just to refresh one person's points in customer.js renderRewards() */
   async getCustomerById(id) {
-    const { data, error } = await supabase
+    const { data, error } = await _sb
       .from('customers')
       .select('*')
       .eq('id', id)
@@ -124,7 +120,7 @@ const DB = {
   },
 
   async loginCustomer(email, password) {
-    const { data, error } = await supabase
+    const { data, error } = await _sb
       .from('customers')
       .select('*')
       .eq('email', email.toLowerCase().trim())
@@ -136,7 +132,7 @@ const DB = {
 
   async registerCustomer(customer) {
     const row = _toDBCustomer(customer);
-    const { data, error } = await supabase
+    const { data, error } = await _sb
       .from('customers')
       .insert(row)
       .select()
@@ -155,7 +151,7 @@ const DB = {
     /* FIX: sync regCode changes (used by admin.js customer management) */
     if (changes.regCode     !== undefined) col.reg_code     = changes.regCode;
     if (!Object.keys(col).length) return;
-    const { error } = await supabase
+    const { error } = await _sb
       .from('customers')
       .update(col)
       .eq('id', id);
@@ -183,14 +179,14 @@ const DB = {
       weight_check:   order.weightCheck || null,
       created_at:     order.date || new Date().toISOString(),
     };
-    const { error } = await supabase
+    const { error } = await _sb
       .from('orders')
       .insert(row);
     if (error) console.error('[DB] saveOrder:', error.message);
   },
 
   async getOrders(storeId) {
-    const { data, error } = await supabase
+    const { data, error } = await _sb
       .from('orders')
       .select('*')
       .eq('store_id', storeId)
@@ -217,7 +213,7 @@ const DB = {
   /* ── RETAILERS ── */
 
   async getRetailers() {
-    const { data, error } = await supabase
+    const { data, error } = await _sb
       .from('retailers')
       .select('*');
     if (error) { console.error('[DB] getRetailers:', error.message); return []; }
@@ -226,14 +222,14 @@ const DB = {
 
   async upsertRetailer(retailer) {
     const row = _toDBRetailer(retailer);
-    const { error } = await supabase
+    const { error } = await _sb
       .from('retailers')
       .upsert(row, { onConflict: 'id' });
     if (error) console.error('[DB] upsertRetailer:', error.message);
   },
 
   async deleteRetailer(id) {
-    const { error } = await supabase
+    const { error } = await _sb
       .from('retailers')
       .delete()
       .eq('id', id);
@@ -395,7 +391,7 @@ async function seedSupabase() {
   /* 1. Retailers */
   const retailers = JSON.parse(localStorage.getItem('sc_retailers') || '[]');
   for (const r of retailers) {
-    await supabase.from('retailers').upsert(_toDBRetailer(r), { onConflict: 'id' });
+    await _sb.from('retailers').upsert(_toDBRetailer(r), { onConflict: 'id' });
   }
   console.log(`[Seed] Retailers: ${retailers.length} rows`);
 
@@ -405,7 +401,7 @@ async function seedSupabase() {
     const key = `sc_inventory_${storeId}`;
     const inv = JSON.parse(localStorage.getItem(key) || '[]');
     for (const p of inv) {
-      await supabase.from('inventory').upsert(_toDBProduct(storeId, p), { onConflict: 'id' });
+      await _sb.from('inventory').upsert(_toDBProduct(storeId, p), { onConflict: 'id' });
     }
     invTotal += inv.length;
   }
@@ -418,7 +414,7 @@ async function seedSupabase() {
     const clientEmail = key.replace('sc_cashiers_', '');
     const list = JSON.parse(localStorage.getItem(key) || '[]');
     for (const c of list) {
-      await supabase.from('cashiers').upsert(_toDBCashier(clientEmail, c), { onConflict: 'id' });
+      await _sb.from('cashiers').upsert(_toDBCashier(clientEmail, c), { onConflict: 'id' });
     }
     cashierTotal += list.length;
   }
@@ -427,7 +423,7 @@ async function seedSupabase() {
   /* 4. Customers */
   const customers = JSON.parse(localStorage.getItem('sc_global_customers') || '[]');
   for (const c of customers) {
-    await supabase.from('customers').upsert(_toDBCustomer(c), { onConflict: 'id' });
+    await _sb.from('customers').upsert(_toDBCustomer(c), { onConflict: 'id' });
   }
   console.log(`[Seed] Customers: ${customers.length} rows`);
 
@@ -440,7 +436,7 @@ async function seedSupabase() {
                          ? JSON.parse(localStorage.getItem('sc_orders') || '[]')
                          : []);
     for (const o of storeOrders) {
-      await supabase.from('orders').upsert({
+      await _sb.from('orders').upsert({
         id:            o.id,
         store_id:      storeId,
         cashier_name:  o.cashier || null,
@@ -464,3 +460,9 @@ async function seedSupabase() {
 
   console.log('[Seed] ✅ Done! Check Supabase Table Editor.');
 }
+
+  /* ── Expose globals so shared.js / admin.js / customer.js can use them ── */
+  window.DB            = DB;
+  window.seedSupabase  = seedSupabase;
+
+})();
