@@ -1800,10 +1800,10 @@ function renderCheckoutOrder(data) {
           min="0"
           placeholder="grams"
           style="width:130px;font-family:var(--font-mono)"
-          onkeydown="if(event.key==='Enter')runWeightCheck(window._pendingCheckoutData,+document.getElementById('simWeightInput').value)"
+          onkeydown="if(event.key==='Enter')runWeightCheck(null,+document.getElementById('simWeightInput').value)"
         />
         <span style="font-family:var(--font-mono);font-size:13px;color:var(--text-3)">g</span>
-        <button class="btn btn-primary btn-sm" onclick="runWeightCheck(window._pendingCheckoutData,+document.getElementById('simWeightInput').value)">
+        <button class="btn btn-primary btn-sm" onclick="runWeightCheck(null,+document.getElementById('simWeightInput').value)">
           Weigh ▶
         </button>
       </div>
@@ -1821,12 +1821,19 @@ function renderCheckoutOrder(data) {
   if (badge) { badge.textContent = '⚖️ Scale Simulated'; badge.className = 'scale-status-badge'; }
 }
 
-function runWeightCheck(data, simulatedGrams) {
+function runWeightCheck(dataOrNull, simulatedGrams) {
+  // Always use the global reference — the onclick passes window._pendingCheckoutData
+  // which may have been serialised as null in older HTML strings; fall back to global.
+  const data = (dataOrNull && typeof dataOrNull === 'object')
+    ? dataOrNull
+    : window._pendingCheckoutData;
+
   const bannerArea  = document.getElementById('weightBannerArea');
   const simPanel    = document.getElementById('scaleSimPanel');
   const completeArea = document.getElementById('completeCheckoutArea');
   const badge       = document.getElementById('scaleStatusBadge');
   if (!bannerArea || !simPanel || !completeArea) return;
+  if (!data) { console.error('[runWeightCheck] No pending checkout data'); return; }
 
   const isDisconnected = document.getElementById('simDisconnected')?.checked;
 
