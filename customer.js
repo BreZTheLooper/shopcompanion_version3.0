@@ -330,14 +330,20 @@ function scrollToProduct(productId) {
    ============================================================ */
 const shopQtyMap = {}; // qty selected per product card (before adding to cart)
 
+function _getCustomerStoreInv() {
+  const storeId = sessionStorage.getItem('sc_selected_store') || 'grocery';
+  return Store.get('inventory_' + storeId) || Store.get('inventory') || [];
+}
+
 function renderShop(data) {
-  const inv  = data || Inventory.getAll();
+  const inv  = data || _getCustomerStoreInv();
 
   // Render top sellers row (skip when called with filtered data to avoid stale state)
   if (!data) renderTopSellers();
 
   // Category pills
-  const cats = ['All', ...Inventory.categories()];
+  const storeInv = _getCustomerStoreInv();
+  const cats = ['All', ...new Set(storeInv.map(p => p.category).filter(Boolean))].sort((a,b) => a==='All'?-1:b==='All'?1:a.localeCompare(b));
   const pillEl = document.getElementById('categoryPills');
   if (pillEl) {
     pillEl.innerHTML = cats.map(c => `
@@ -350,8 +356,9 @@ function renderShop(data) {
   const catSel = document.getElementById('shopCategory');
   if (catSel) {
     const cur = catSel.value;
+    const storeCats = [...new Set(storeInv.map(p => p.category).filter(Boolean))].sort();
     catSel.innerHTML = '<option value="">All Categories</option>' +
-      Inventory.categories().map(c => `<option value="${c}" ${c===cur?'selected':''}>${c}</option>`).join('');
+      storeCats.map(c => `<option value="${c}" ${c===cur?'selected':''}>${c}</option>`).join('');
   }
 
   // Product cards
@@ -385,7 +392,7 @@ function renderShop(data) {
           ${expiryBadge}
           <div class="product-meta" style="margin-top:4px">
             ${p.stock > 0 ? `<span style="color:var(--green)">✔ ${p.stock} in stock</span>` : '<span style="color:var(--red)">Out of stock</span>'}
-            ${Inventory.isLowStock(p) && p.stock > 0 ? `<span style="color:var(--yellow);margin-left:6px">⚠ Low</span>` : ''}
+            ${(p.stock > 0 && p.stock <= (p.lowStockAt || 10)) ? `<span style="color:var(--yellow);margin-left:6px">⚠ Low</span>` : ''}
           </div>
         </div>
         <div class="product-price">${formatPHP(p.price)}</div>
@@ -410,7 +417,7 @@ function filterShop() {
 
   activeCategoryFilter = cat;
 
-  let items = Inventory.getAll().filter(p =>
+  let items = _getCustomerStoreInv().filter(p =>
     (!query || p.name.toLowerCase().includes(query) || (p.barcode||'').includes(query) || (p.type||'').toLowerCase().includes(query)) &&
     (!cat   || p.category === cat)
   );

@@ -20,6 +20,7 @@ const Store = {
    SEED DATA — Populated once if store is empty
    ============================================================ */
 function seedData() {
+  migrateTopSellers(); // runs once even on existing installs (independent of seeded_v4)
   if (Store.get('seeded_v4')) return;
 
   Store.set('subscription_plans', [
@@ -42,6 +43,19 @@ function seedData() {
 
   Store.set('orders', []);
 
+  /* ── Pre-seed top sellers so the row appears immediately ── */
+  const _tsSeed = {
+    grocery: { JDC004:92, JDC013:87, JDC001:76, JDC009:71, JDC006:65, JDC022:58, JDC005:54, JDC020:49 },
+    toy:     { TL003:104, TL001:98,  TL009:88,  TL005:81,  TL012:73,  TL015:67,  TL007:61,  TL021:55  },
+    school:  { HL003:115, HL004:108, HL009:97,  HL006:89,  HL001:78,  HL012:71,  HL010:64,  HL005:56  },
+  };
+  for (const [sid, counts] of Object.entries(_tsSeed)) {
+    const key = 'sc_top_sellers_' + sid;
+    if (!localStorage.getItem(key)) {
+      localStorage.setItem(key, JSON.stringify(counts));
+    }
+  }
+
   if (!localStorage.getItem('sc_global_customers')) {
     localStorage.setItem('sc_global_customers', JSON.stringify([
       { id: 'GC001', name: 'Mark Santos', email: 'mark@gmail.com', password: 'mark123', phone: '09171111111', joined: '2025-01-10', lastLogin: '2025-05-14', totalOrders: 5,  points: 50 },
@@ -50,6 +64,23 @@ function seedData() {
   }
 
   Store.set('seeded_v4', true);
+}
+
+/* ── Top-sellers migration: runs once even on existing installs ── */
+function migrateTopSellers() {
+  if (localStorage.getItem('sc_ts_seeded_v1')) return;
+  const seed = {
+    grocery: { JDC004:92, JDC013:87, JDC001:76, JDC009:71, JDC006:65, JDC022:58, JDC005:54, JDC020:49 },
+    toy:     { TL003:104, TL001:98,  TL009:88,  TL005:81,  TL012:73,  TL015:67,  TL007:61,  TL021:55  },
+    school:  { HL003:115, HL004:108, HL009:97,  HL006:89,  HL001:78,  HL012:71,  HL010:64,  HL005:56  },
+  };
+  for (const [sid, counts] of Object.entries(seed)) {
+    const key = 'sc_top_sellers_' + sid;
+    if (!localStorage.getItem(key)) {
+      localStorage.setItem(key, JSON.stringify(counts));
+    }
+  }
+  localStorage.setItem('sc_ts_seeded_v1', '1');
 }
 
 /* ============================================================
