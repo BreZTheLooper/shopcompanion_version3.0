@@ -1789,7 +1789,7 @@ function renderCheckoutOrder(data) {
     expectedWeight += (product?.weightGrams || 0) * i.qty;
   });
   data.expectedWeight  = expectedWeight;
-  data.tolerancePct    = 0.10;
+  data.tolerancePct    = 0.15;
   data.reweighCount    = data.reweighCount || 0;
   data.lastWeighedGrams = data.lastWeighedGrams || null;
   data._weightBlocked  = true; // mark as pending until weight passes
@@ -1825,6 +1825,43 @@ function renderCheckoutOrder(data) {
 
     <div id="weightBannerArea"></div>
 
+    <!-- ══ ARDUINO SERIAL SCALE PANEL ══ -->
+    <div class="scale-serial-panel" id="scaleSerialPanel">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:1.1rem">🔌</span>
+        <strong style="font-family:var(--font-subhead);font-size:0.95rem">Arduino Scale (HX711)</strong>
+        <span id="serialConnBadge" class="scale-serial-badge disconnected">DISCONNECTED</span>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-2);margin-bottom:10px">
+        Expected: <strong>${expectedWeight.toLocaleString()}g</strong>
+        <span style="color:var(--text-3);margin-left:6px">(±15%: ${lowerBound.toLocaleString()}g – ${upperBound.toLocaleString()}g)</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn btn-primary btn-sm" id="serialConnectBtn" onclick="serialScaleConnect()">
+          🔌 Connect Scale
+        </button>
+        <button class="btn btn-ghost btn-sm hidden" id="serialDisconnectBtn" onclick="serialScaleDisconnect()">
+          ⏹ Disconnect
+        </button>
+        <button class="btn btn-ghost btn-sm hidden" id="serialTareBtn" onclick="serialScaleTare()">
+          ⚖️ Tare
+        </button>
+      </div>
+      <div id="serialLiveReadout" class="scale-serial-readout">
+        <span style="color:var(--text-3);font-size:13px">Connect the scale to see live readings.</span>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-success btn-sm hidden" id="serialWeighBtn"
+          onclick="serialScaleWeighNow()">
+          ✅ Use This Reading
+        </button>
+      </div>
+      <div style="margin-top:8px;font-family:var(--font-body);font-size:11px;color:var(--text-3)">
+        Requires Chrome / Edge · Arduino must run <em>ShopCompanion_Scale.ino</em> at 115200 baud
+      </div>
+    </div>
+
+    <!-- ══ SIMULATOR PANEL (always available) ══ -->
     <div class="scale-sim-panel" id="scaleSimPanel">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
         <span style="font-size:1.1rem">⚖️</span>
@@ -1833,7 +1870,7 @@ function renderCheckoutOrder(data) {
       </div>
       <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-2);margin-bottom:14px">
         Expected: <strong>${expectedWeight.toLocaleString()}g</strong>
-        <span style="color:var(--text-3);margin-left:6px">(±10%: ${lowerBound.toLocaleString()}g – ${upperBound.toLocaleString()}g)</span>
+        <span style="color:var(--text-3);margin-left:6px">(±15%: ${lowerBound.toLocaleString()}g – ${upperBound.toLocaleString()}g)</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
         <input
@@ -1853,7 +1890,7 @@ function renderCheckoutOrder(data) {
       </div>
       <label style="display:flex;align-items:center;gap:8px;font-family:var(--font-body);font-size:13px;cursor:pointer;color:var(--text-2)">
         <input type="checkbox" id="simDisconnected"
-          onchange="document.getElementById('scaleStatusBadge')&&(document.getElementById('scaleStatusBadge').textContent=this.checked?'⚖️ Scale Offline':'⚖️ Scale Simulated',document.getElementById('scaleStatusBadge').className='scale-status-badge'+(this.checked?' offline':''))" />
+          onchange="document.getElementById('scaleStatusBadge')&&(document.getElementById('scaleStatusBadge').textContent=this.checked?'⚖️ Scale Offline':'⚖️ Scale Disconnected',document.getElementById('scaleStatusBadge').className='scale-status-badge'+(this.checked?' offline':''))" />
         Simulate scale disconnected
       </label>
     </div>
@@ -1862,8 +1899,232 @@ function renderCheckoutOrder(data) {
 
   // Update scale badge to default state
   const badge = document.getElementById('scaleStatusBadge');
-  if (badge) { badge.textContent = '⚖️ Scale Simulated'; badge.className = 'scale-status-badge'; }
+  if (badge) {
+    if (window._serialScale && window._serialScale.connected) {
+      badge.textContent = '⚖️ Scale Connected'; badge.className = 'scale-status-badge verified';
+    } else {
+      badge.textContent = '⚖️ Scale Disconnected'; badge.className = 'scale-status-badge offline';
+    }
+  }
+
+  // If Arduino scale is already connected from a previous order, re-attach the readout
+  if (window._serialScale && window._serialScale.connected) {
+    setTimeout(_serialScaleAttachReadout, 100);
+  }
 }
+
+/* ============================================================
+   ARDUINO SERIAL SCALE — Web Serial API (HX711 + Nano)
+   Calibration factor: -106.0  |  Baud: 115200
+   Tolerance: ±15%
+   ============================================================ */
+
+window._serialScale = window._serialScale || {
+  port:       null,
+  reader:     null,
+  writer:     null,
+  connected:  false,
+  lastGrams:  null,
+  _readLoop:  null,
+  _lineBuffer: '',
+};
+
+async function serialScaleConnect() {
+  if (!('serial' in navigator)) {
+    toast('Web Serial not supported. Use Chrome or Edge on desktop.', 'error');
+    return;
+  }
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+
+    window._serialScale.port      = port;
+    window._serialScale.connected = true;
+    window._serialScale._lineBuffer = '';
+
+    _serialScaleAttachReadout();
+    _serialScaleStartRead();
+
+    toast('Arduino scale connected ✅', 'success');
+  } catch (err) {
+    if (err.name !== 'NotFoundError') {
+      toast('Could not open serial port: ' + err.message, 'error');
+    }
+  }
+}
+
+async function serialScaleDisconnect() {
+  const ss = window._serialScale;
+  try {
+    if (ss.reader) { try { await ss.reader.cancel(); } catch(_) {} ss.reader = null; }
+    if (ss.port)   { try { await ss.port.close();   } catch(_) {} ss.port   = null; }
+  } catch(_) {}
+  ss.connected = false;
+  ss.lastGrams = null;
+  _serialScaleUpdateUI(false);
+  toast('Scale disconnected', 'warning');
+}
+
+async function serialScaleTare() {
+  const ss = window._serialScale;
+  if (!ss.connected || !ss.port) { toast('Scale not connected', 'error'); return; }
+  try {
+    const encoder = new TextEncoder();
+    const writer  = ss.port.writable.getWriter();
+    await writer.write(encoder.encode('T\n'));
+    writer.releaseLock();
+    toast('Tare sent to scale ⚖️', 'info');
+  } catch (err) {
+    toast('Tare failed: ' + err.message, 'error');
+  }
+}
+
+function _serialScaleAttachReadout() {
+  const ss   = window._serialScale;
+  const wrap  = document.getElementById('scaleSerialPanel');
+  const badge = document.getElementById('serialConnBadge');
+  const connBtn  = document.getElementById('serialConnectBtn');
+  const discBtn  = document.getElementById('serialDisconnectBtn');
+  const tareBtn  = document.getElementById('serialTareBtn');
+  const weighBtn = document.getElementById('serialWeighBtn');
+
+  if (!wrap) return; // panel not rendered yet
+
+  if (ss.connected) {
+    if (badge)   { badge.textContent = 'CONNECTED'; badge.className = 'scale-serial-badge connected'; }
+    if (connBtn)  connBtn.classList.add('hidden');
+    if (discBtn)  discBtn.classList.remove('hidden');
+    if (tareBtn)  tareBtn.classList.remove('hidden');
+    if (weighBtn) weighBtn.classList.remove('hidden');
+
+    const globalBadge = document.getElementById('scaleStatusBadge');
+    if (globalBadge) { globalBadge.textContent = '⚖️ Scale Connected'; globalBadge.className = 'scale-status-badge verified'; }
+  } else {
+    _serialScaleUpdateUI(false);
+  }
+}
+
+function _serialScaleUpdateUI(connected) {
+  const badge    = document.getElementById('serialConnBadge');
+  const connBtn  = document.getElementById('serialConnectBtn');
+  const discBtn  = document.getElementById('serialDisconnectBtn');
+  const tareBtn  = document.getElementById('serialTareBtn');
+  const weighBtn = document.getElementById('serialWeighBtn');
+  const readout  = document.getElementById('serialLiveReadout');
+  const globalBadge = document.getElementById('scaleStatusBadge');
+
+  if (connected) {
+    if (badge)   { badge.textContent = 'CONNECTED'; badge.className = 'scale-serial-badge connected'; }
+    if (connBtn)  connBtn.classList.add('hidden');
+    if (discBtn)  discBtn.classList.remove('hidden');
+    if (tareBtn)  tareBtn.classList.remove('hidden');
+    if (weighBtn) weighBtn.classList.remove('hidden');
+    if (globalBadge) { globalBadge.textContent = '⚖️ Scale Connected'; globalBadge.className = 'scale-status-badge verified'; }
+  } else {
+    if (badge)   { badge.textContent = 'DISCONNECTED'; badge.className = 'scale-serial-badge disconnected'; }
+    if (connBtn)  connBtn.classList.remove('hidden');
+    if (discBtn)  discBtn.classList.add('hidden');
+    if (tareBtn)  tareBtn.classList.add('hidden');
+    if (weighBtn) weighBtn.classList.add('hidden');
+    if (readout)  readout.innerHTML = '<span style="color:var(--text-3);font-size:13px">Connect the scale to see live readings.</span>';
+    if (globalBadge) { globalBadge.textContent = '⚖️ Scale Disconnected'; globalBadge.className = 'scale-status-badge offline'; }
+  }
+}
+
+async function _serialScaleStartRead() {
+  const ss = window._serialScale;
+  if (!ss.port || !ss.port.readable) return;
+
+  const decoder = new TextDecoder();
+  ss.reader = ss.port.readable.getReader();
+
+  try {
+    while (ss.connected) {
+      const { value, done } = await ss.reader.read();
+      if (done) break;
+
+      ss._lineBuffer += decoder.decode(value, { stream: true });
+
+      // Process complete lines
+      let nl;
+      while ((nl = ss._lineBuffer.indexOf('\n')) !== -1) {
+        const line = ss._lineBuffer.slice(0, nl).trim();
+        ss._lineBuffer = ss._lineBuffer.slice(nl + 1);
+        if (line) _serialScaleParseLine(line);
+      }
+    }
+  } catch (err) {
+    if (ss.connected) {
+      toast('Scale disconnected unexpectedly', 'error');
+      ss.connected = false;
+      _serialScaleUpdateUI(false);
+    }
+  } finally {
+    try { ss.reader.releaseLock(); } catch(_) {}
+  }
+}
+
+/**
+ * Parse a line from the Arduino sketch.
+ * Expected format from ShopCompanion_Scale.ino:
+ *   WEIGHT:123.4
+ *   TARE_OK
+ *   STABLE:456.7
+ */
+function _serialScaleParseLine(line) {
+  const ss = window._serialScale;
+  const readout = document.getElementById('serialLiveReadout');
+
+  if (line.startsWith('WEIGHT:') || line.startsWith('STABLE:')) {
+    const raw = parseFloat(line.split(':')[1]);
+    if (isNaN(raw)) return;
+
+    const grams = Math.round(raw * 10) / 10;
+    ss.lastGrams = grams;
+
+    if (readout) {
+      const data = window._pendingCheckoutData;
+      let colorClass = '';
+      let hint = '';
+      if (data && data.expectedWeight > 0) {
+        const lo = data.expectedWeight * 0.85;
+        const hi = data.expectedWeight * 1.15;
+        if (grams >= lo && grams <= hi) {
+          colorClass = 'style="color:var(--green)"';
+          hint = ' ✅';
+        } else {
+          colorClass = 'style="color:var(--red)"';
+          hint = ' ⚠️';
+        }
+      }
+      readout.innerHTML = `
+        <div class="scale-serial-live" ${colorClass}>
+          <span class="scale-serial-value">${grams.toLocaleString()}</span>
+          <span class="scale-serial-unit">g${hint}</span>
+        </div>`;
+    }
+
+  } else if (line === 'TARE_OK') {
+    ss.lastGrams = 0;
+    if (readout) readout.innerHTML = '<span style="color:var(--blue);font-size:13px;font-family:var(--font-mono)">Tare OK — 0.0 g</span>';
+    toast('Scale tared ✅', 'success');
+  }
+}
+
+function serialScaleWeighNow() {
+  const ss   = window._serialScale;
+  const data = window._pendingCheckoutData;
+
+  if (!ss.connected) { toast('Scale not connected', 'error'); return; }
+  if (ss.lastGrams === null) { toast('No reading yet — place basket on scale first', 'warning'); return; }
+  if (!data) { toast('No pending order', 'error'); return; }
+
+  runWeightCheck(data, ss.lastGrams);
+}
+
+/* ============================================================
+   END ARDUINO SERIAL SCALE
+   ============================================================ */
 
 function runWeightCheck(dataOrNull, simulatedGrams) {
   // Always use the global reference — the onclick passes window._pendingCheckoutData
@@ -1924,7 +2185,14 @@ function runWeightCheck(dataOrNull, simulatedGrams) {
     window._lastVerifiedData = data;
     if (badge) { badge.textContent = '⚖️ Verified'; badge.className = 'scale-status-badge verified'; }
     setTimeout(() => {
-      if (badge) { badge.textContent = '⚖️ Scale Simulated'; badge.className = 'scale-status-badge'; }
+      if (badge) {
+        const ss = window._serialScale;
+        if (ss && ss.connected) {
+          badge.textContent = '⚖️ Scale Connected'; badge.className = 'scale-status-badge verified';
+        } else {
+          badge.textContent = '⚖️ Scale Disconnected'; badge.className = 'scale-status-badge offline';
+        }
+      }
     }, 4000);
   } else if (simulatedGrams > upperBound) {
     bannerArea.innerHTML = `<div class="weight-banner fail">
@@ -1932,7 +2200,7 @@ function runWeightCheck(dataOrNull, simulatedGrams) {
     </div>`;
     completeArea.innerHTML = reweighBtn(data);
     simPanel.classList.add('hidden');
-    if (badge) { badge.textContent = '⚖️ Scale Simulated'; badge.className = 'scale-status-badge'; }
+    if (badge) { badge.textContent = '⚖️ Weight Mismatch'; badge.className = 'scale-status-badge offline'; }
     data._weightBlocked = true;
   } else {
     bannerArea.innerHTML = `<div class="weight-banner fail">
@@ -1940,7 +2208,7 @@ function runWeightCheck(dataOrNull, simulatedGrams) {
     </div>`;
     completeArea.innerHTML = reweighBtn(data);
     simPanel.classList.add('hidden');
-    if (badge) { badge.textContent = '⚖️ Scale Simulated'; badge.className = 'scale-status-badge'; }
+    if (badge) { badge.textContent = '⚖️ Weight Mismatch'; badge.className = 'scale-status-badge offline'; }
     data._weightBlocked = true;
   }
 }
@@ -1949,7 +2217,14 @@ function reweighBtn(data) {
   // Always keep data reference alive so the Weigh button never receives null
   window._pendingCheckoutData = data;
   return `<button class="btn btn-ghost w-full" style="margin-top:12px"
-    onclick="document.getElementById('scaleSimPanel').classList.remove('hidden');document.getElementById('weightBannerArea').innerHTML='';document.getElementById('completeCheckoutArea').innerHTML='';">
+    onclick="
+      var sp=document.getElementById('scaleSerialPanel');
+      var sim=document.getElementById('scaleSimPanel');
+      if(sp)sp.classList.remove('hidden');
+      if(sim)sim.classList.remove('hidden');
+      document.getElementById('weightBannerArea').innerHTML='';
+      document.getElementById('completeCheckoutArea').innerHTML='';
+    ">
     🔄 Re-weigh
   </button>`;
 }
