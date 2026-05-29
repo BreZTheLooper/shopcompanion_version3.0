@@ -236,6 +236,49 @@ const DB = {
     if (error) console.error('[DB] deleteRetailer:', error.message);
   },
 
+  /* ── TOP SELLERS ── */
+
+  async getTopSellers(storeId) {
+    const { data, error } = await _sb
+      .from('top_sellers')
+      .select('*')
+      .eq('store_id', storeId)
+      .order('count', { ascending: false });
+    if (error) { console.error('[DB] getTopSellers:', error.message); return []; }
+    return (data || []).map(r => ({ id: r.product_id, count: r.count }));
+  },
+
+  async incrementTopSeller(storeId, productId, qty) {
+    /* Use a raw RPC upsert so we get atomic increment without a read-modify-write race */
+    const { error } = await _sb.rpc('increment_top_seller', {
+      p_store_id:   storeId,
+      p_product_id: productId,
+      p_qty:        qty,
+    });
+    if (error) {
+      /* RPC not available — fall back to manual upsert (reads current then writes) */
+      const { data: existing } = await _sb
+        .from('top_sellers')
+        .select('count')
+        .eq('store_id', storeId)
+        .eq('product_id', productId)
+        .single();
+      const newCount = ((existing?.count) || 0) + qty;
+      const { error: upsertErr } = await _sb
+        .from('top_sellers')
+        .upsert({ store_id: storeId, product_id: productId, count: newCount },
+                 { onConflict: 'store_id,product_id' });
+      if (upsertErr) console.error('[DB] incrementTopSeller fallback:', upsertErr.message);
+    }
+  },
+
+  async incrementTopSellerBatch(storeId, items) {
+    /* items: [{ id, qty }] */
+    for (const item of items) {
+      await this.incrementTopSeller(storeId, item.id, item.qty || 1);
+    }
+  },
+
   /* ── ONE-TIME SEED ── */
   /* Call seedSupabase() once from the browser console to push
      all localStorage data into Supabase.                       */
@@ -459,6 +502,22 @@ async function seedSupabase() {
   console.log(`[Seed] Orders: ${orderTotal} rows`);
 
   console.log('[Seed] ✅ Done! Check Supabase Table Editor.');
+
+  /* 6. Top sellers (migrate existing localStorage counts) */
+  let tsTotal = 0;
+  for (const storeId of ['grocery', 'toy', 'school']) {
+    const key   = 'sc_top_sellers_' + storeId;
+    const store = JSON.parse(localStorage.getItem(key) || '{}');
+    for (const [productId, count] of Object.entries(store)) {
+      await _sb.from('top_sellers').upsert(
+        { store_id: storeId, product_id: productId, count },
+        { onConflict: 'store_id,product_id' }
+      );
+      tsTotal++;
+    }
+  }
+  console.log(`[Seed] Top sellers: ${tsTotal} rows`);
+  console.log('[Seed] ✅ All done!');
 }
 
   /* ── Expose globals so shared.js / admin.js / customer.js can use them ── */

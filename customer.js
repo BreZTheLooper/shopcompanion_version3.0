@@ -198,12 +198,143 @@ function registerCustomer() {
 }
 
 /* ============================================================
+   TOP SELLERS — per-store tracking & rendering (localStorage + Supabase)
+   ============================================================ */
+
+const TOP_SELLERS_KEY_PREFIX = 'sc_top_sellers_';
+const TOP_SELLERS_SHOW = 8; // cards visible in the row
+
+function _topSellersStoreId() {
+  return sessionStorage.getItem('sc_selected_store') || 'grocery';
+}
+
+/* Write one product increment to localStorage cache + Supabase */
+function _trackProductAdd(productId, qty = 1) {
+  const storeId = _topSellersStoreId();
+  /* Local cache — instant, survives offline */
+  try {
+    const key   = TOP_SELLERS_KEY_PREFIX + storeId;
+    const store = JSON.parse(localStorage.getItem(key) || '{}');
+    store[productId] = (store[productId] || 0) + qty;
+    localStorage.setItem(key, JSON.stringify(store));
+  } catch(e) {}
+  /* Supabase sync — fire-and-forget */
+  if (typeof DB !== 'undefined') {
+    DB.incrementTopSeller(storeId, productId, qty).catch(() => {});
+  }
+}
+
+/* Batch-track a completed order's items (called from admin.js too) */
+function trackOrderItems(items) {
+  if (!Array.isArray(items)) return;
+  const storeId = _topSellersStoreId();
+  /* Local cache */
+  try {
+    const key   = TOP_SELLERS_KEY_PREFIX + storeId;
+    const store = JSON.parse(localStorage.getItem(key) || '{}');
+    items.forEach(i => { store[i.id] = (store[i.id] || 0) + (i.qty || 1); });
+    localStorage.setItem(key, JSON.stringify(store));
+  } catch(e) {}
+  /* Supabase batch */
+  if (typeof DB !== 'undefined') {
+    DB.incrementTopSellerBatch(storeId, items).catch(() => {});
+  }
+}
+
+/* Read top sellers — prefer Supabase, fall back to localStorage cache */
+async function fetchTopSellers() {
+  const storeId = _topSellersStoreId();
+  if (typeof DB !== 'undefined') {
+    try {
+      const rows = await DB.getTopSellers(storeId);
+      if (rows.length) {
+        /* Refresh local cache with fresh DB data */
+        try {
+          const cache = {};
+          rows.forEach(r => { cache[r.id] = r.count; });
+          localStorage.setItem(TOP_SELLERS_KEY_PREFIX + storeId, JSON.stringify(cache));
+        } catch(e) {}
+        return rows.slice(0, TOP_SELLERS_SHOW);
+      }
+    } catch(e) {}
+  }
+  /* Fallback: localStorage */
+  try {
+    const key   = TOP_SELLERS_KEY_PREFIX + storeId;
+    const store = JSON.parse(localStorage.getItem(key) || '{}');
+    return Object.entries(store)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, TOP_SELLERS_SHOW)
+      .map(([id, count]) => ({ id, count }));
+  } catch(e) { return []; }
+}
+
+function renderTopSellers() {
+  const section = document.getElementById('topSellersSection');
+  const listEl  = document.getElementById('topSellersList');
+  const nameEl  = document.getElementById('topSellersStoreName');
+  if (!section || !listEl) return;
+
+  const storeId  = _topSellersStoreId();
+  const storeMap = { grocery: 'JDC Grocery', toy: 'Toylandia', school: 'Hiraya Likhain' };
+  if (nameEl) nameEl.textContent = storeMap[storeId] || storeId;
+
+  fetchTopSellers().then(top => {
+    if (!top.length) { section.classList.add('hidden'); return; }
+
+    const inv      = Store.get('inventory_' + storeId) || Store.get('inventory') || [];
+    const maxCount = top[0]?.count || 1;
+
+    const cards = top.map(({ id, count }, idx) => {
+      const p = inv.find(p => p.id === id);
+      if (!p) return '';
+      const pct       = Math.round((count / maxCount) * 100);
+      const rank      = idx + 1;
+      const rankClass = rank <= 3 ? `rank-${rank}` : '';
+      return `
+        <div class="top-seller-card" onclick="scrollToProduct('${p.id}')" title="View ${p.name}">
+          <span class="top-seller-rank ${rankClass}">#${rank}</span>
+          <span class="top-seller-emoji">${p.image || '📦'}</span>
+          <div class="top-seller-name">${p.name}</div>
+          <div class="top-seller-price">${formatPHP(p.price)}</div>
+          <div class="top-seller-meta">${count} add${count !== 1 ? 's' : ''} to cart</div>
+          <div class="top-seller-bar-wrap">
+            <div class="top-seller-bar" style="width:${pct}%"></div>
+          </div>
+        </div>`;
+    }).join('');
+
+    listEl.innerHTML = cards;
+    section.classList.toggle('hidden', !cards.trim());
+  });
+}
+
+/* Scroll the main grid to a product and briefly highlight it */
+function scrollToProduct(productId) {
+  const shopPanel = document.getElementById('cpanel-shop');
+  if (shopPanel && shopPanel.classList.contains('hidden')) {
+    custSwitchTab('shop', document.querySelector('[data-tab=shop]'));
+  }
+  setTimeout(() => {
+    const card = document.querySelector(`[data-product-id="${productId}"]`);
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card.classList.add('highlighted');
+      setTimeout(() => card.classList.remove('highlighted'), 1600);
+    }
+  }, 80);
+}
+
+/* ============================================================
    SHOP / PRODUCT BROWSER
    ============================================================ */
 const shopQtyMap = {}; // qty selected per product card (before adding to cart)
 
 function renderShop(data) {
   const inv  = data || Inventory.getAll();
+
+  // Render top sellers row (skip when called with filtered data to avoid stale state)
+  if (!data) renderTopSellers();
 
   // Category pills
   const cats = ['All', ...Inventory.categories()];
@@ -245,7 +376,7 @@ function renderShop(data) {
     }
 
     return `
-      <div class="product-card ${outOfStock ? 'out-of-stock' : ''}">
+      <div class="product-card ${outOfStock ? 'out-of-stock' : ''}" data-product-id="${p.id}">
         <span class="product-emoji">${p.image || '📦'}</span>
         <div>
           <div class="product-name">${p.name}</div>
@@ -382,6 +513,8 @@ function addProductToCart(product, qty = 1) {
       image: product.image || '📦'
     });
   }
+  // Track add-to-cart behaviour for top sellers
+  _trackProductAdd(product.id, qty);
   persistCart();
   updateCartBadge();
   renderCart();
@@ -818,3 +951,6 @@ function copyVoucherCode(code) {
   // Switch to cart tab
   custSwitchTab('cart', document.querySelector('[data-tab=cart]'));
 }
+
+/* ── Expose top seller tracker for admin.js completeCheckout ── */
+window.trackOrderItems = trackOrderItems;

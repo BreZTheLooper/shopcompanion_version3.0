@@ -1957,6 +1957,15 @@ function completeCheckout(data) {
   // Deduct inventory stock
   Inventory.deductStock(data.items.map(i => ({ id: i.id, qty: i.qty })));
 
+  // Track sold items for Top Sellers (localStorage + Supabase)
+  if (typeof window.trackOrderItems === 'function') {
+    window.trackOrderItems(data.items);
+  } else if (typeof DB !== 'undefined') {
+    // Direct DB fallback if customer.js not in scope
+    const _sid = sessionStorage.getItem('sc_selected_store') || 'grocery';
+    DB.incrementTopSellerBatch(_sid, data.items).catch(() => {});
+  }
+
   // Save order record
   const order = Orders.add({
     customerId:   data.customerId,
