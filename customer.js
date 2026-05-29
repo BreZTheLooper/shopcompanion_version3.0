@@ -203,10 +203,27 @@ function registerCustomer() {
 const shopQtyMap = {}; // qty selected per product card (before adding to cart)
 
 function renderShop(data) {
-  const inv  = data || Inventory.getAll();
+  // If no data passed in, fetch live inventory from Supabase for the selected store
+  if (!data && typeof DB !== 'undefined') {
+    const storeId = sessionStorage.getItem('sc_selected_store') || 'grocery';
+    DB.getInventory(storeId).then(freshInv => {
+      if (freshInv && freshInv.length) {
+        // Cache into both per-store and generic keys so Inventory.getAll() stays in sync
+        Store.set('inventory_' + storeId, freshInv);
+        Store.set('inventory', freshInv);
+        renderShop(freshInv);
+      }
+    }).catch(() => {}); // silently fall through to localStorage cache on error
+  }
+
+  const storeId = sessionStorage.getItem('sc_selected_store') || 'grocery';
+  const inv = data
+    || Store.get('inventory_' + storeId)
+    || Store.get('inventory')
+    || [];
 
   // Category pills
-  const cats = ['All', ...Inventory.categories()];
+  const cats = ['All', ...new Set(inv.map(p => p.category).filter(Boolean))].sort();
   const pillEl = document.getElementById('categoryPills');
   if (pillEl) {
     pillEl.innerHTML = cats.map(c => `
@@ -219,8 +236,9 @@ function renderShop(data) {
   const catSel = document.getElementById('shopCategory');
   if (catSel) {
     const cur = catSel.value;
+    const allCats = [...new Set(inv.map(p => p.category).filter(Boolean))].sort();
     catSel.innerHTML = '<option value="">All Categories</option>' +
-      Inventory.categories().map(c => `<option value="${c}" ${c===cur?'selected':''}>${c}</option>`).join('');
+      allCats.map(c => `<option value="${c}" ${c===cur?'selected':''}>${c}</option>`).join('');
   }
 
   // Product cards
@@ -254,7 +272,7 @@ function renderShop(data) {
           ${expiryBadge}
           <div class="product-meta" style="margin-top:4px">
             ${p.stock > 0 ? `<span style="color:var(--green)">✔ ${p.stock} in stock</span>` : '<span style="color:var(--red)">Out of stock</span>'}
-            ${Inventory.isLowStock(p) && p.stock > 0 ? `<span style="color:var(--yellow);margin-left:6px">⚠ Low</span>` : ''}
+            ${(p.stock > 0 && p.stock <= (p.lowStockAt || 10)) ? `<span style="color:var(--yellow);margin-left:6px">⚠ Low</span>` : ''}
           </div>
         </div>
         <div class="product-price">${formatPHP(p.price)}</div>
@@ -279,7 +297,10 @@ function filterShop() {
 
   activeCategoryFilter = cat;
 
-  let items = Inventory.getAll().filter(p =>
+  const _sid = sessionStorage.getItem('sc_selected_store') || 'grocery';
+  const _inv = Store.get('inventory_' + _sid) || Store.get('inventory') || [];
+
+  let items = _inv.filter(p =>
     (!query || p.name.toLowerCase().includes(query) || (p.barcode||'').includes(query) || (p.type||'').toLowerCase().includes(query)) &&
     (!cat   || p.category === cat)
   );
