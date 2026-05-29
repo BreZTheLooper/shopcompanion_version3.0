@@ -1661,64 +1661,87 @@ function loadOrderByTextCode() {
   if (!input) return;
   const code = input.value.trim().toUpperCase();
   if (!code) { toast('Enter a code first', 'warning'); return; }
+  if (!/^[A-Z0-9]{6}$/.test(code)) { toast('Code must be exactly 6 characters', 'warning'); return; }
 
   const TEXT_CODE_STORE_KEY = 'sc_text_codes';
-  let store;
-  try { store = JSON.parse(localStorage.getItem(TEXT_CODE_STORE_KEY) || '{}'); }
-  catch(e) { store = {}; }
 
-  const payload = store[code];
-
-  if (payload) {
-    // Found in localStorage (same-device use)
-    if (payload.ts && Date.now() - payload.ts > 2 * 60 * 60 * 1000) {
-      toast(`Code "${code}" has expired`, 'error');
+  // ── Helper: dispatch a found payload ──
+  function _dispatch(payloadObj) {
+    // Normalise — payload might arrive as a JSON string from Supabase
+    let p = payloadObj;
+    if (typeof p === 'string') {
+      try { p = JSON.parse(p); } catch(e) {
+        toast('Corrupt code payload — ask customer to regenerate', 'error');
+        return;
+      }
+    }
+    if (!p || !Array.isArray(p.items) || !p.items.length) {
+      toast('Code payload has no items — ask customer to regenerate', 'error');
       return;
     }
-    // Consume (single-use)
-    delete store[code];
-    localStorage.setItem(TEXT_CODE_STORE_KEY, JSON.stringify(store));
+    if (p.ts && Date.now() - p.ts > 2 * 60 * 60 * 1000) {
+      toast(`Code "${code}" has expired (codes last 2 hours)`, 'error');
+      return;
+    }
     input.value = '';
     toast(`Order loaded via code "${code}" ✅`, 'success');
-    handleCheckoutQR(JSON.stringify(payload));
+    renderCheckoutOrder(p);   // call directly — skip handleCheckoutQR to avoid 6-char re-route
+  }
+
+  // ── Helper: mark error on input ──
+  function _markError(msg) {
+    toast(msg, 'error');
+    input.classList.add('input-error');
+    setTimeout(() => input.classList.remove('input-error'), 1500);
+  }
+
+  // ── 1. Check localStorage first (same-device — fastest) ──
+  let store = {};
+  try { store = JSON.parse(localStorage.getItem(TEXT_CODE_STORE_KEY) || '{}'); } catch(e) { store = {}; }
+
+  if (store[code]) {
+    const entry = store[code];
+    // Consume (single-use)
+    delete store[code];
+    try { localStorage.setItem(TEXT_CODE_STORE_KEY, JSON.stringify(store)); } catch(e) {}
+    _dispatch(entry);
     return;
   }
 
-  // Not in localStorage — try Supabase (cross-device: customer on phone, cashier on PC)
-  if (typeof window._sc_supabase !== 'undefined') {
-    toast('Looking up code…', 'info');
-    window._sc_supabase
-      .from('cart_codes')
-      .select('*')
-      .eq('code', code)
-      .single()
-      .then(({ data, error }) => {
-        if (error || !data) {
-          toast(`Code "${code}" not found or expired`, 'error');
-          const inp = document.getElementById('checkoutTextCodeInput');
-          if (inp) { inp.classList.add('input-error'); setTimeout(() => inp.classList.remove('input-error'), 1500); }
-          return;
-        }
-        const p = data.payload;
-        if (p.ts && Date.now() - p.ts > 2 * 60 * 60 * 1000) {
-          toast(`Code "${code}" has expired`, 'error');
-          // Clean up expired row
+  // ── 2. Fallback to Supabase (cross-device: customer on phone, cashier on PC) ──
+  const _sbLookup = (typeof DB !== 'undefined' && typeof DB.getCartCode === 'function')
+    ? () => DB.getCartCode(code).then(row => {
+        if (!row) return _markError(`Code "${code}" not found. Check the code and try again.`);
+        DB.deleteCartCode(code).catch(() => {});
+        _dispatch(row.payload);
+      }).catch(err => _markError(`Lookup failed: ${err.message || 'network error'}`))
+    : (typeof window._sc_supabase !== 'undefined')
+    ? () => window._sc_supabase
+        .from('cart_codes')
+        .select('code, payload, created_at')
+        .eq('code', code)
+        .maybeSingle()
+        .then(({ data, error }) => {
+          if (error) {
+            if (error.code === '42P01' || (error.message && error.message.includes('does not exist'))) {
+              _markError(`Code "${code}" not found. (Run the cart_codes SQL in Supabase first — see README)`);
+            } else {
+              _markError(`Code "${code}" not found or expired`);
+            }
+            return;
+          }
+          if (!data) { _markError(`Code "${code}" not found. Check the code and try again.`); return; }
           window._sc_supabase.from('cart_codes').delete().eq('code', code).then(() => {});
-          return;
-        }
-        // Consume from Supabase (single-use)
-        window._sc_supabase.from('cart_codes').delete().eq('code', code).then(() => {});
-        input.value = '';
-        toast(`Order loaded via code "${code}" ✅`, 'success');
-        handleCheckoutQR(JSON.stringify(p));
-      })
-      .catch(() => {
-        toast(`Code "${code}" not found or expired`, 'error');
-      });
+          _dispatch(data.payload);
+        })
+        .catch(err => _markError(`Lookup failed: ${err.message || 'network error'}`))
+    : null;
+
+  if (_sbLookup) {
+    toast('Looking up code…', 'info');
+    _sbLookup();
   } else {
-    toast(`Code "${code}" not found or expired`, 'error');
-    const inp = document.getElementById('checkoutTextCodeInput');
-    if (inp) { inp.classList.add('input-error'); setTimeout(() => inp.classList.remove('input-error'), 1500); }
+    _markError(`Code "${code}" not found — codes only work on the same device when offline`);
   }
 }
 
@@ -1749,13 +1772,15 @@ function handleCheckoutQR(raw) {
     toast('Previous blocked transaction logged as abandoned', 'warning');
   }
 
-  // If the scanned value is a 6-char alphanumeric code (new QR format),
-  // route it through the same lookup path as the text-code input field.
+  // If the scanned value is a 6-char alphanumeric code (customer QR encodes the text code),
+  // route it through the text-code lookup path.
   const trimmed = (typeof raw === 'string' ? raw : '').trim().toUpperCase();
   if (/^[A-Z0-9]{6}$/.test(trimmed)) {
     stopCheckoutScanner();
-    const input = document.getElementById('checkoutTextCodeInput');
-    if (input) input.value = trimmed;
+    // Populate the input field so the cashier can see what was scanned
+    const inp = document.getElementById('checkoutTextCodeInput');
+    if (inp) inp.value = trimmed;
+    // Trigger the lookup directly
     loadOrderByTextCode();
     return;
   }
@@ -1857,7 +1882,8 @@ function renderCheckoutOrder(data) {
         </button>
       </div>
       <div style="margin-top:8px;font-family:var(--font-body);font-size:11px;color:var(--text-3)">
-        Requires Chrome / Edge · Arduino must run <em>ShopCompanion_Scale.ino</em> at 115200 baud
+        Requires Chrome / Edge · Arduino must run <em>ShopCompanion_Scale.ino</em> at 115200 baud ·
+        <strong style="color:var(--yellow)">Close Arduino IDE Serial Monitor before connecting</strong>
       </div>
     </div>
 
@@ -1934,32 +1960,75 @@ async function serialScaleConnect() {
     toast('Web Serial not supported. Use Chrome or Edge on desktop.', 'error');
     return;
   }
+
+  const ss = window._serialScale;
+
+  // ── If a stale port object exists, tear it down cleanly first ──
+  if (ss.port) {
+    try { if (ss.reader) { await ss.reader.cancel().catch(() => {}); ss.reader = null; } } catch(_) {}
+    try { await ss.port.close(); } catch(_) {}
+    ss.port      = null;
+    ss.connected = false;
+    ss.lastGrams = null;
+    // Small pause so the OS releases the port
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  let port;
   try {
-    const port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 115200 });
-
-    window._serialScale.port      = port;
-    window._serialScale.connected = true;
-    window._serialScale._lineBuffer = '';
-
-    _serialScaleAttachReadout();
-    _serialScaleStartRead();
-
-    toast('Arduino scale connected ✅', 'success');
+    port = await navigator.serial.requestPort();
   } catch (err) {
-    if (err.name !== 'NotFoundError') {
+    // User cancelled the picker — silent
+    if (err.name === 'NotFoundError' || err.name === 'AbortError') return;
+    toast('Could not request serial port: ' + err.message, 'error');
+    return;
+  }
+
+  try {
+    // If the port is already open (e.g. left over from a previous session),
+    // try to close it before re-opening.
+    try { await port.close(); } catch(_) {}
+    await new Promise(r => setTimeout(r, 200));
+
+    await port.open({ baudRate: 115200 });
+  } catch (err) {
+    // "Failed to open serial port" usually means another app (Arduino IDE Serial
+    // Monitor, another tab, etc.) has the port locked.
+    if (err.message && err.message.toLowerCase().includes('failed to open')) {
+      toast(
+        'Port is in use by another app. Close Arduino IDE Serial Monitor (or other programs using this port), then try again.',
+        'error'
+      );
+    } else {
       toast('Could not open serial port: ' + err.message, 'error');
     }
+    return;
   }
+
+  ss.port         = port;
+  ss.connected    = true;
+  ss._lineBuffer  = '';
+
+  _serialScaleAttachReadout();
+  _serialScaleStartRead();
+
+  toast('Arduino scale connected ✅', 'success');
 }
 
 async function serialScaleDisconnect() {
   const ss = window._serialScale;
+  ss.connected = false; // mark disconnected immediately so read loop exits
   try {
-    if (ss.reader) { try { await ss.reader.cancel(); } catch(_) {} ss.reader = null; }
-    if (ss.port)   { try { await ss.port.close();   } catch(_) {} ss.port   = null; }
+    if (ss.reader) {
+      try { await ss.reader.cancel(); } catch(_) {}
+      try { ss.reader.releaseLock(); } catch(_) {}
+      ss.reader = null;
+    }
   } catch(_) {}
-  ss.connected = false;
+  await new Promise(r => setTimeout(r, 150)); // let read loop unwind
+  try {
+    if (ss.port) { try { await ss.port.close(); } catch(_) {} ss.port = null; }
+  } catch(_) {}
   ss.lastGrams = null;
   _serialScaleUpdateUI(false);
   toast('Scale disconnected', 'warning');
@@ -2039,7 +2108,10 @@ async function _serialScaleStartRead() {
   ss.reader = ss.port.readable.getReader();
 
   try {
-    while (ss.connected) {
+    while (true) {
+      // Exit if disconnect() was called
+      if (!ss.connected) break;
+
       const { value, done } = await ss.reader.read();
       if (done) break;
 
@@ -2054,13 +2126,15 @@ async function _serialScaleStartRead() {
       }
     }
   } catch (err) {
-    if (ss.connected) {
+    // Ignore cancel errors triggered by our own disconnect
+    if (ss.connected && err.name !== 'AbortError') {
       toast('Scale disconnected unexpectedly', 'error');
       ss.connected = false;
       _serialScaleUpdateUI(false);
     }
   } finally {
     try { ss.reader.releaseLock(); } catch(_) {}
+    ss.reader = null;
   }
 }
 

@@ -279,6 +279,35 @@ const DB = {
     }
   },
 
+  /* ── CART CODES (6-char text codes for cross-device checkout) ── */
+
+  async saveCartCode(code, payload) {
+    const { error } = await _sb
+      .from('cart_codes')
+      .upsert({ code, payload, created_at: new Date().toISOString() }, { onConflict: 'code' });
+    if (error) console.warn('[DB] saveCartCode:', error.message);
+  },
+
+  async getCartCode(code) {
+    const { data, error } = await _sb
+      .from('cart_codes')
+      .select('code, payload, created_at')
+      .eq('code', code)
+      .maybeSingle();
+    if (error) { console.warn('[DB] getCartCode:', error.message); return null; }
+    return data || null;
+  },
+
+  async deleteCartCode(code) {
+    await _sb.from('cart_codes').delete().eq('code', code);
+  },
+
+  async purgeExpiredCartCodes() {
+    // Remove codes older than 2 hours
+    const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    await _sb.from('cart_codes').delete().lt('created_at', cutoff);
+  },
+
   /* ── ONE-TIME SEED ── */
   /* Call seedSupabase() once from the browser console to push
      all localStorage data into Supabase.                       */

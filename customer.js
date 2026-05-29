@@ -865,8 +865,10 @@ function renderQRCode() {
 const TEXT_CODE_STORE_KEY = 'sc_text_codes';
 
 function generateCartTextCode(payload) {
-  // Produce a 6-character alphanumeric code
-  const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+  // Produce a guaranteed 6-character uppercase alphanumeric code
+  const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/1/0 to avoid confusion
+  let code = '';
+  for (let i = 0; i < 6; i++) code += CHARS[Math.floor(Math.random() * CHARS.length)];
   const entry = { ...payload, ts: Date.now() };
 
   // Always save to localStorage (same-device fallback)
@@ -877,7 +879,9 @@ function generateCartTextCode(payload) {
   localStorage.setItem(TEXT_CODE_STORE_KEY, JSON.stringify(store));
 
   // Also save to Supabase so a cashier on a different device can look it up
-  if (typeof window._sc_supabase !== 'undefined') {
+  if (typeof DB !== 'undefined' && typeof DB.saveCartCode === 'function') {
+    DB.saveCartCode(code, entry).catch(() => {});
+  } else if (typeof window._sc_supabase !== 'undefined') {
     window._sc_supabase
       .from('cart_codes')
       .upsert({ code, payload: entry, created_at: new Date().toISOString() }, { onConflict: 'code' })
