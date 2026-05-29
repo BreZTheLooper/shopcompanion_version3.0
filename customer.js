@@ -685,7 +685,7 @@ function renderQRCode() {
   qrEl.innerHTML = '';
   const wrap = document.createElement('div');
   wrap.className = 'qr-wrapper';
-  generatePlainQR(wrap, payload, 240);
+  generatePlainQR(wrap, textCode, 240);
   qrEl.appendChild(wrap);
 
   // Text-code fallback block (shown below the QR)

@@ -1748,6 +1748,17 @@ function handleCheckoutQR(raw) {
     toast('Previous blocked transaction logged as abandoned', 'warning');
   }
 
+  // If the scanned value is a 6-char alphanumeric code (new QR format),
+  // route it through the same lookup path as the text-code input field.
+  const trimmed = (typeof raw === 'string' ? raw : '').trim().toUpperCase();
+  if (/^[A-Z0-9]{6}$/.test(trimmed)) {
+    stopCheckoutScanner();
+    const input = document.getElementById('checkoutTextCodeInput');
+    if (input) input.value = trimmed;
+    loadOrderByTextCode();
+    return;
+  }
+
   let data;
   try {
     data = typeof raw === 'string' ? JSON.parse(raw) : raw;
