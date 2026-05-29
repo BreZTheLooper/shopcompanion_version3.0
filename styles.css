@@ -1179,3 +1179,61 @@ tbody tr { transition: background var(--transition); }
     margin: 0 auto 10px;
   }
 }
+
+/* ============================================================
+   LIGHT-THEME SIDEBAR FIXES
+   Sidebar uses --surface (#fff) in light mode — text and icons
+   become invisible. Override with a visible navy/slate background.
+   ============================================================ */
+
+html.light-theme .sidebar {
+  background: #1a2e4a;
+  border-right-color: rgba(0,0,0,0.12);
+}
+
+html.light-theme .sidebar-header {
+  border-bottom-color: rgba(255,255,255,0.10);
+}
+
+html.light-theme .logo-title {
+  color: #e8f0fc !important;
+}
+
+html.light-theme .logo-role {
+  color: #7eb8f7 !important;
+}
+
+html.light-theme .nav-item {
+  color: #a8c4e0 !important;
+}
+
+html.light-theme .nav-item:hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: #e8f0fc !important;
+}
+
+html.light-theme .nav-item.active {
+  background: rgba(77,143,255,0.20) !important;
+  color: #7eb8f7 !important;
+  border-color: rgba(77,143,255,0.35) !important;
+}
+
+html.light-theme .nav-switch-btn {
+  color: #a8c4e0 !important;
+  border-top-color: rgba(255,255,255,0.10) !important;
+}
+
+html.light-theme .nav-switch-btn:hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: #e8f0fc !important;
+}
+
+/* Logout button typically shares nav-switch-btn styling */
+html.light-theme .logout-btn {
+  color: #f88 !important;
+  border-top-color: rgba(255,255,255,0.10) !important;
+}
+
+html.light-theme .logout-btn:hover {
+  background: rgba(255,80,80,0.12) !important;
+}
