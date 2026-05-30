@@ -108,13 +108,21 @@ const WEIGHT_MAP = {
 };
 
 function migrateWeightGrams() {
-  const inv = JSON.parse(localStorage.getItem('sc_inventory') || 'null');
-  if (!inv) return;
-  let changed = false;
-  inv.forEach(p => {
-    if (p.weightGrams == null && WEIGHT_MAP[p.id] != null) { p.weightGrams = WEIGHT_MAP[p.id]; changed = true; }
-  });
-  if (changed) localStorage.setItem('sc_inventory', JSON.stringify(inv));
+  // Migrate weight data for each store-scoped key independently.
+  // The old shared 'sc_inventory' key is no longer used to avoid cross-store leakage.
+  for (const sid of ['grocery', 'toy', 'school']) {
+    const raw = localStorage.getItem('sc_inventory_' + sid);
+    if (!raw) continue;
+    try {
+      const inv = JSON.parse(raw);
+      if (!Array.isArray(inv)) continue;
+      let changed = false;
+      inv.forEach(p => {
+        if (p.weightGrams == null && WEIGHT_MAP[p.id] != null) { p.weightGrams = WEIGHT_MAP[p.id]; changed = true; }
+      });
+      if (changed) localStorage.setItem('sc_inventory_' + sid, JSON.stringify(inv));
+    } catch(e) {}
+  }
 }
 migrateWeightGrams();
 
@@ -133,8 +141,10 @@ const Inventory = {
 
   getAll() {
     const sid = _getStoreId();
-    if (sid) return Store.get('inventory_' + sid) || Store.get('inventory') || [];
-    return Store.get('inventory') || [];
+    // IMPORTANT: never fall through to the shared 'inventory' key — it may belong to a
+    // different store that logged in earlier and would cause cross-store data leakage.
+    if (sid) return Store.get('inventory_' + sid) || [];
+    return [];
   },
 
   save(inv) {
@@ -142,8 +152,10 @@ const Inventory = {
               || (typeof sessionStorage !== 'undefined'
                   ? (sessionStorage.getItem('sc_selected_store') || null)
                   : null);
+    // IMPORTANT: only write to the store-scoped key. Writing to the shared 'inventory'
+    // key caused cross-store leakage when another store's session fell back to it.
     if (sid) Store.set('inventory_' + sid, inv);
-    Store.set('inventory', inv);
+    // No longer writing to Store.set('inventory', inv) — that shared key is the bug.
   },
 
   findById(id)      { return this.getAll().find(p => p.id === id); },

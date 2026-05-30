@@ -620,7 +620,7 @@ function loginSuccess(role, storeId, storeName) {
 
         MultiStore.saveInventory(storeId, merged);
         Store.set('inventory_' + storeId, merged);
-        Store.set('inventory', merged);
+        // Do NOT write to Store.set('inventory') — that shared key causes cross-store leakage.
         // Re-render if inventory panel is visible
         if (typeof renderClientInventory  === 'function') renderClientInventory();
         if (typeof renderCashierInventory === 'function') renderCashierInventory();
@@ -636,17 +636,12 @@ function loginSuccess(role, storeId, storeName) {
    ============================================================ */
 function loadStoreInventory(storeId) {
   const inventory = MultiStore.getInventory(storeId);
-  // Inject into the shared Inventory system
-  Store.set('inventory', inventory);
-  // Also update store-specific key
+  // Write only to the store-scoped key — never to the shared 'inventory' key.
+  // The shared key was the cause of cross-store inventory leakage.
+  Store.set('inventory_' + storeId, inventory);
   MultiStore.saveInventory(storeId, inventory);
-  // Patch Inventory.save to persist to store-specific key
+  // Set storeId on the Inventory singleton so getAll() and save() use the right scoped key.
   Inventory._storeId = storeId;
-  const origSave = Inventory.save.bind(Inventory);
-  Inventory.save = function(inv) {
-    origSave(inv);
-    MultiStore.saveInventory(storeId, inv);
-  };
 }
 
 function updateStoreBadges(storeName, storeId) {
@@ -722,7 +717,7 @@ function selectStoreAndEnter(storeId) {
 
   // Load this store's inventory from local cache (instant)
   const storeInventory = MultiStore.getInventory(storeId);
-  Store.set('inventory', storeInventory);
+  // Write only to store-scoped key — never to the shared 'inventory' key.
   Store.set('inventory_' + storeId, storeInventory);
 
   // Background sync from Supabase — merge so new products added by the client always appear
@@ -740,7 +735,7 @@ function selectStoreAndEnter(storeId) {
         const merged    = [...items, ...localOnly];
         MultiStore.saveInventory(storeId, merged);
         Store.set('inventory_' + storeId, merged);
-        Store.set('inventory', merged);
+        // Do NOT write to Store.set('inventory') — that shared key causes cross-store leakage.
         // Re-render shop if it's visible
         if (typeof renderShop === 'function') renderShop();
       }
